@@ -30,9 +30,24 @@ Fonts: Plus Jakarta Sans (UI) + Fraunces (display). Rounded cards, pill tabs, de
 - No authentication (single demo profile "Asha") — matches original app.
 - Tested: 21/21 backend pytest pass; frontend 100% (bottom nav, toggle, spice meter, AI, filters).
 
+## Implemented (later sessions)
+- Migrated to PostgreSQL/Supabase (SQLAlchemy async + asyncpg), Google Login via Supabase (JWKS verify in
+  backend), guest mode, profile page, favorites, per-user streak/plate stats. Vercel deploy (frontend+backend).
+- Local dev: PostgreSQL 15 installed manually (not supervisor-managed: `service postgresql start`),
+  DB `nutrivane`, backend `.env` uses `SUPABASE_JWT_MODE=legacy` + `scripts/dev_token.py` for test tokens.
+
+## Implemented (2026-10-09) — "Your Mood" AI
+- `POST /api/mood/recommend`: Gemini 3 Flash (Emergent key) → JSON {headline, summary, items[name,kind,why,
+  slug→recipe card,origin_tag lokal/asal/umum], tip}; inputs mood_key + story + current_country + origin_country.
+  Fallback = curated mood recipes if AI fails. Every call logged in `mood_logs` (user_id nullable).
+- Countries saved to `profiles.current_country/origin_country` for logged-in users; `/api/me` returns them;
+  `PUT /api/me/countries`. Frontend prefills from profile.
+- MoodPage: MoodSelector + StoryForm (textarea, country datalist inputs, swap) + AiResult (items link to recipes).
+- Tested: testing agent iteration_2 — 12/12 backend, all frontend flows pass.
+
 ## Backlog / future
-- P1: Real per-user accounts + real streak/plate analytics (currently demo counters).
+- P1: Riwayat mood (list `mood_logs` di profil) + grafik mood mingguan.
 - P1: Live camera capture (currently upload/benchmark preview in beta).
-- P2: Expand dataset beyond 3 menus (drinks/dessert/tea exist in source doc).
+- P2: Expand dataset beyond 7 menus (drinks/dessert/tea exist in source doc).
 - P2: Cache invalidation / dataset version in AI insight cache key.
-- P2: Favourites persistence.
+- P2: Streaming AI response untuk mood (saat ini ~15-20s tunggu).

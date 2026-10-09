@@ -34,3 +34,8 @@ alter table public.profiles
   add constraint profiles_user_fk foreign key (user_id) references auth.users(id) on delete cascade;
 alter table public.favorites
   add constraint favorites_user_fk foreign key (user_id) references auth.users(id) on delete cascade;
+
+-- Mood AI (fitur "Your Mood"): log rekomendasi per pengguna (user_id null = tamu, hanya diakses backend)
+alter table public.mood_logs enable row level security;
+create policy "own mood logs read"   on public.mood_logs for select to authenticated using ((select auth.uid()) = user_id);
+create policy "own mood logs insert" on public.mood_logs for insert to authenticated with check ((select auth.uid()) = user_id);

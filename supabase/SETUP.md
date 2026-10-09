@@ -47,7 +47,14 @@ VISION_MODEL_NAME=gemini-3.1-pro-preview
 ## 4. Cara kerja auth
 Frontend login lewat `supabase.auth.signInWithOAuth({ provider: "google" })` → Supabase mengembalikan session →
 setiap request ke FastAPI membawa `Authorization: Bearer <access_token>` → backend memverifikasi JWT (JWKS)
-dan selalu memfilter data dengan `user_id` dari token. Tabel per-pengguna: `profiles`, `scans`, `favorites`.
+dan selalu memfilter data dengan `user_id` dari token. Tabel per-pengguna: `profiles`, `scans`, `favorites`, `mood_logs`.
+
+## 4b. Fitur "Your Mood" AI (update)
+- Endpoint `POST /api/mood/recommend` (tamu & login) → Gemini (`INSIGHT_MODEL_NAME`) via `EMERGENT_LLM_KEY`.
+  Input: `mood_key`, `story` (cerita hari, opsional), `current_country`, `origin_country`.
+- Kolom baru `profiles.current_country` & `profiles.origin_country` + tabel `mood_logs` dibuat otomatis oleh backend
+  saat start (idempotent). Jika ingin manual: jalankan ulang `schema.sql`, lalu bagian `mood_logs` di `policies.sql`.
+- Negara tersimpan ke profil pengguna yang login, lalu terisi otomatis di kunjungan berikutnya.
 
 ## 5. Uji lokal tanpa Supabase (dev)
 Backend `.env` memakai `SUPABASE_JWT_MODE=legacy` + secret dev, sehingga token uji bisa dibuat:
