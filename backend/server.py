@@ -5,9 +5,12 @@ import os
 import logging
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta, date
+import json
+import re
+import uuid
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -40,6 +43,18 @@ class ScanRequest(BaseModel):
     benchmark_slug: str
     measure: bool = False
     image_base64: Optional[str] = None
+
+
+class MoodRecommendRequest(BaseModel):
+    mood_key: str
+    story: str = Field(default="", max_length=1200)
+    current_country: str = Field(default="", max_length=60)
+    origin_country: str = Field(default="", max_length=60)
+
+
+class CountriesRequest(BaseModel):
+    current_country: str = Field(default="", max_length=60)
+    origin_country: str = Field(default="", max_length=60)
 
 
 # ----------------------------- AI helpers -----------------------------
@@ -101,6 +116,81 @@ async def analyze_food_image(image_base64: str) -> str:
     except Exception as e:
         logger.warning(f"vision AI failed: {e}")
         return "Belum bisa menganalisis foto saat ini. Coba lagi atau pilih menu benchmark."
+
+
+def _parse_json_block(raw: str) -> dict:
+    cleaned = re.sub(r"^```(?:json)?|```$", "", (raw or "").strip(), flags=re.M).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    return json.loads(cleaned[start:end + 1])
+
+
+def mood_fallback(mood: dict, recipes: list, current_country: str, origin_country: str) -> dict:
+    where = f" di {current_country}" if current_country else ""
+    items = [{
+        "name": r["name"], "kind": "minuman" if r["category"] in ("minuman", "teh") else "makanan",
+        "why": r["tagline"], "slug": r["slug"], "origin_tag": "lokal",
+    } for r in recipes[:3]]
+    return {
+        "headline": f"Pilihan {mood['label'].lower()} untukmu",
+        "summary": f"Kami pilihkan menu yang biasanya cocok saat kamu ingin merasa {mood['label'].lower()}{where}.",
+        "items": items,
+        "tip": "Mulai dari porsi kecil dan nikmati pelan-pelan — tubuhmu yang paling tahu.",
+    }
+
+
+async def recommend_mood_ai(mood: dict, story: str, current_country: str, origin_country: str, catalog: list) -> Optional[dict]:
+    if not EMERGENT_LLM_KEY:
+        return None
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"mood-{uuid.uuid4()}",
+            system_message=(
+                "Kamu asisten kuliner NutriVane yang hangat, empatik, dan tidak menghakimi. "
+                "Selalu jawab dalam Bahasa Indonesia. Keluarkan HANYA JSON valid tanpa teks lain, dengan skema: "
+                '{"headline": str (maks 8 kata), "summary": str (1-2 kalimat yang merespons cerita/mood pengguna), '
+                '"items": [{"name": str, "kind": "makanan"|"minuman", "why": str (1 kalimat), '
+                '"slug": str|null (isi hanya jika sama persis dengan menu di katalog, selain itu null), '
+                '"origin_tag": "lokal"|"asal"|"umum"}], "tip": str (1 kalimat)}. '
+                "Berikan 4-5 items: campuran makanan dan minimal 1 minuman. "
+                "'lokal' = hidangan yang mudah ditemukan di negara tempat tinggal saat ini; "
+                "'asal' = comfort food dari negara asal pengguna; 'umum' = saran umum. "
+                "Jika negara asal berbeda dengan negara saat ini, sertakan minimal 1 item 'asal' dan 1 item 'lokal'. "
+                "Jika negara tidak diisi, anggap pengguna berada di Indonesia. Hindari saran medis."
+            ),
+        ).with_model(INSIGHT_PROVIDER, INSIGHT_MODEL)
+        catalog_line = "; ".join(f"{r['slug']} = {r['name']} ({r['category_label']}: {r['tagline']})" for r in catalog)
+        prompt = (
+            f"Mood yang dipilih: {mood['label']} {mood['emoji']} — {mood['subtitle']}.\n"
+            f"Cerita pengguna: {story.strip() or '(tidak ada cerita, gunakan mood saja)'}\n"
+            f"Negara tempat tinggal saat ini: {current_country or '(tidak diisi)'}\n"
+            f"Negara asal: {origin_country or '(tidak diisi)'}\n"
+            f"Katalog menu NutriVane (slug = nama): {catalog_line}\n"
+            "Buat rekomendasi makanan & minuman yang paling pas untuk perasaan dan konteks ini."
+        )
+        resp = await chat.send_message(UserMessage(text=prompt))
+        data = _parse_json_block(resp)
+        valid_slugs = {r["slug"] for r in catalog}
+        items = []
+        for it in (data.get("items") or [])[:5]:
+            if not it.get("name"):
+                continue
+            slug = it.get("slug")
+            items.append({
+                "name": str(it["name"]), "kind": "minuman" if it.get("kind") == "minuman" else "makanan",
+                "why": str(it.get("why") or ""), "slug": slug if slug in valid_slugs else None,
+                "origin_tag": it.get("origin_tag") if it.get("origin_tag") in ("lokal", "asal", "umum") else "umum",
+            })
+        if not items:
+            return None
+        return {
+            "headline": str(data.get("headline") or f"Pilihan {mood['label'].lower()} untukmu"),
+            "summary": str(data.get("summary") or ""), "items": items, "tip": str(data.get("tip") or ""),
+        }
+    except Exception as e:
+        logger.warning(f"mood AI failed, using fallback: {e}")
+        return None
 
 
 # ----------------------------- Data helpers -----------------------------
@@ -272,6 +362,40 @@ async def mood_detail(key: str, db=Depends(get_db)):
     return {**m, "recipes": [recipe_card(r) for r in recs]}
 
 
+@api_router.post("/mood/recommend")
+async def mood_recommend(req: MoodRecommendRequest, user=Depends(optional_user), db=Depends(get_db)):
+    row = (await db.execute(text(
+        "select key,label,emoji,subtitle,recipe_slugs from moods where key=:key"), {"key": req.mood_key})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Mood tidak ditemukan")
+    mood = row_dict(row)
+    current_country, origin_country = req.current_country.strip(), req.origin_country.strip()
+    catalog = await fetch_recipes(db)
+    recipes_by_slug = {r["slug"]: r for r in catalog}
+
+    rec = await recommend_mood_ai(mood, req.story, current_country, origin_country, catalog)
+    source = "ai" if rec else "fallback"
+    if not rec:
+        rec = mood_fallback(mood, [recipes_by_slug[s] for s in mood["recipe_slugs"] if s in recipes_by_slug],
+                            current_country, origin_country)
+    for it in rec["items"]:
+        it["recipe"] = recipe_card(recipes_by_slug[it["slug"]]) if it.get("slug") else None
+
+    await db.execute(text(
+        "insert into mood_logs(user_id,mood_key,story,current_country,origin_country,recommendation) "
+        "values(cast(:uid as uuid),:key,:story,:cur,:org,cast(:rec as jsonb))"
+    ), {"uid": user["id"] if user else None, "key": mood["key"], "story": req.story.strip(),
+        "cur": current_country or None, "org": origin_country or None, "rec": json.dumps(rec)})
+    if user and (current_country or origin_country):
+        await upsert_profile(db, user)
+        await db.execute(text(
+            "update profiles set current_country=:cur, origin_country=:org where user_id=cast(:uid as uuid)"
+        ), {"cur": current_country or None, "org": origin_country or None, "uid": user["id"]})
+    await db.commit()
+    return {**rec, "mood": {k: mood[k] for k in ("key", "label", "emoji")}, "source": source,
+            "current_country": current_country, "origin_country": origin_country, "saved_to_account": bool(user)}
+
+
 @api_router.get("/insight/{slug}")
 async def get_insight(slug: str, db=Depends(get_db)):
     r = await fetch_recipe(db, slug)
@@ -320,10 +444,27 @@ async def stats(user=Depends(optional_user), db=Depends(get_db)):
 
 
 # ----------------------------- Account endpoints (auth required) -----------------------------
+async def profile_countries(db, user_id: str) -> dict:
+    row = (await db.execute(text(
+        "select current_country, origin_country from profiles where user_id=cast(:uid as uuid)"), {"uid": user_id})).first()
+    return {"current_country": (row and row[0]) or "", "origin_country": (row and row[1]) or ""}
+
+
 @api_router.get("/me")
 async def me(user=Depends(require_user), db=Depends(get_db)):
     await upsert_profile(db, user)
-    return {"user": user, "stats": await user_stats(db, user["id"]), "favorites": await favorite_slugs(db, user["id"])}
+    return {"user": {**user, **(await profile_countries(db, user["id"]))},
+            "stats": await user_stats(db, user["id"]), "favorites": await favorite_slugs(db, user["id"])}
+
+
+@api_router.put("/me/countries")
+async def set_countries(req: CountriesRequest, user=Depends(require_user), db=Depends(get_db)):
+    await upsert_profile(db, user)
+    await db.execute(text(
+        "update profiles set current_country=:cur, origin_country=:org where user_id=cast(:uid as uuid)"
+    ), {"cur": req.current_country.strip() or None, "org": req.origin_country.strip() or None, "uid": user["id"]})
+    await db.commit()
+    return await profile_countries(db, user["id"])
 
 
 @api_router.get("/favorites")
