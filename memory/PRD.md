@@ -45,8 +45,16 @@ Fonts: Plus Jakarta Sans (UI) + Fraunces (display). Rounded cards, pill tabs, de
 - MoodPage: MoodSelector + StoryForm (textarea, country datalist inputs, swap) + AiResult (items link to recipes).
 - Tested: testing agent iteration_2 — 12/12 backend, all frontend flows pass.
 
+## Implemented (2026-10-09) — Grafik mood mingguan + Bagikan WhatsApp
+- `GET /api/mood/weekly` (optional auth): 7 hari (Asia/Jakarta) dari `mood_logs` → per hari count, moods, dominant;
+  total, active_days, top. Guest → authenticated:false, kosong.
+- Beranda: `components/home/MoodWeekChart.jsx` (bar chart 7 hari, emoji dominan di atas bar, hari ini terracotta;
+  state tamu → ajak login, state kosong → ajak check-in).
+- AiResult: tombol "Bagikan ke WhatsApp" (wa.me/?text=...) berisi headline, ringkasan, daftar item, tip, link /mood.
+- Tested: testing agent iteration_3 — 8/8 backend, semua alur frontend lolos.
+
 ## Backlog / future
-- P1: Riwayat mood (list `mood_logs` di profil) + grafik mood mingguan.
+- P1: Riwayat mood (list `mood_logs` di profil) — detail per entri.
 - P1: Live camera capture (currently upload/benchmark preview in beta).
 - P2: Expand dataset beyond 7 menus (drinks/dessert/tea exist in source doc).
 - P2: Cache invalidation / dataset version in AI insight cache key.
