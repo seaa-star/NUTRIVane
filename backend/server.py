@@ -396,6 +396,43 @@ async def mood_recommend(req: MoodRecommendRequest, user=Depends(optional_user),
             "current_country": current_country, "origin_country": origin_country, "saved_to_account": bool(user)}
 
 
+DAY_LABELS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+
+
+@api_router.get("/mood/weekly")
+async def mood_weekly(user=Depends(optional_user), db=Depends(get_db)):
+    today = datetime.now(APP_TZ).date()
+    start = today - timedelta(days=6)
+    moods = {r.key: r for r in (await db.execute(text("select key,label,emoji from moods"))).all()}
+    per_day = {start + timedelta(days=i): {} for i in range(7)}
+    if user:
+        rows = (await db.execute(text(
+            "select (created_at at time zone :tz)::date as d, mood_key, count(*) as n from mood_logs "
+            "where user_id=cast(:uid as uuid) and created_at >= cast(:start as timestamptz) "
+            "group by d, mood_key"
+        ), {"uid": user["id"], "tz": APP_TZ.key, "start": datetime.combine(start - timedelta(days=1), datetime.min.time(), APP_TZ)})).all()
+        for r in rows:
+            if r.d in per_day and r.mood_key in moods:
+                per_day[r.d][r.mood_key] = r.n
+    totals = {}
+    days = []
+    for d, counts in per_day.items():
+        dom = max(counts, key=counts.get) if counts else None
+        for k, n in counts.items():
+            totals[k] = totals.get(k, 0) + n
+        days.append({
+            "date": d.isoformat(), "label": DAY_LABELS[d.weekday()], "is_today": d == today,
+            "count": sum(counts.values()), "moods": counts,
+            "dominant": {"key": dom, "label": moods[dom].label, "emoji": moods[dom].emoji} if dom else None,
+        })
+    top_key = max(totals, key=totals.get) if totals else None
+    return {
+        "authenticated": bool(user), "days": days, "total": sum(totals.values()),
+        "active_days": sum(1 for d in days if d["count"]),
+        "top": {"key": top_key, "label": moods[top_key].label, "emoji": moods[top_key].emoji, "count": totals[top_key]} if top_key else None,
+    }
+
+
 @api_router.get("/insight/{slug}")
 async def get_insight(slug: str, db=Depends(get_db)):
     r = await fetch_recipe(db, slug)

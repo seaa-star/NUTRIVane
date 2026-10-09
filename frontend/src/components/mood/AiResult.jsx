@@ -1,6 +1,22 @@
 import { Link } from "react-router-dom";
-import { Utensils, CupSoda, ArrowRight, Lightbulb, Sparkles, RefreshCw } from "lucide-react";
+import { Utensils, CupSoda, ArrowRight, Lightbulb, Sparkles, RefreshCw, Share2 } from "lucide-react";
 import { MOOD } from "@/constants/testIds";
+
+export function buildShareText(result) {
+  const lines = [
+    `${result.mood?.emoji || ""} *Rekomendasi NutriVane* — mood ${result.mood?.label || ""}`.trim(),
+    `*${result.headline}*`,
+    result.summary,
+    "",
+    ...result.items.map((it, i) => `${i + 1}. *${it.name}* (${it.kind}) — ${it.why}`),
+  ];
+  if (result.tip) lines.push("", `Tip: ${result.tip}`);
+  lines.push("", `Coba cek mood-mu juga: ${window.location.origin}/mood`);
+  return lines.join("\n");
+}
+
+const shareToWhatsApp = (result) =>
+  window.open(`https://wa.me/?text=${encodeURIComponent(buildShareText(result))}`, "_blank", "noopener,noreferrer");
 
 const TAG = {
   lokal: { label: "Lokal", bg: "var(--nv-green-soft)", color: "var(--nv-green)" },
@@ -68,6 +84,11 @@ export function AiResult({ result, onRetry }) {
           <p className="text-xs leading-relaxed" style={{ color: "var(--nv-ink)" }}>{result.tip}</p>
         </div>
       )}
+      <button onClick={() => shareToWhatsApp(result)} data-testid={MOOD.shareBtn}
+        className="w-full flex items-center justify-center gap-2 rounded-full py-3 text-sm font-bold text-white transition-transform active:scale-[0.98]"
+        style={{ background: "#25D366" }}>
+        <Share2 size={16} /> Bagikan ke WhatsApp
+      </button>
       <button onClick={onRetry} data-testid={MOOD.retryBtn} className="flex items-center gap-1.5 text-xs font-bold mx-auto" style={{ color: "var(--nv-green)" }}>
         <RefreshCw size={12} /> Racik ulang
       </button>

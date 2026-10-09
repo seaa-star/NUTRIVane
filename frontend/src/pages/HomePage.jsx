@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight, Flame, Check, Camera, LogIn } from "lucide-react";
 import Layout from "@/components/Layout";
 import { RecipeCard, SectionHead } from "@/components/common";
+import { MoodWeekChart } from "@/components/home/MoodWeekChart";
 import { getHome } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { HOME } from "@/constants/testIds";
@@ -87,6 +88,8 @@ export default function HomePage() {
             </Link>
           </div>
         </section>
+
+        <MoodWeekChart userId={user?.id} />
 
         {/* moods */}
         <section className="nv-rise" style={{ animationDelay: "120ms" }}>

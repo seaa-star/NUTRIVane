@@ -16,6 +16,12 @@ export const HOME = {
   streakChip: "home-streak-chip",
   platesCount: "home-plates-count",
   loginBanner: "home-login-banner",
+  moodChart: "home-mood-chart",
+  moodChartBar: (d) => `home-mood-bar-${d}`,
+  moodChartTop: "home-mood-chart-top",
+  moodChartEmpty: "home-mood-chart-empty",
+  moodChartGuest: "home-mood-chart-guest",
+  moodChartCta: "home-mood-chart-cta",
 };
 
 export const SCAN = {
@@ -98,4 +104,5 @@ export const MOOD = {
   aiError: "mood-ai-error",
   aiLoading: "mood-ai-loading",
   retryBtn: "mood-ai-retry-btn",
+  shareBtn: "mood-ai-share-btn",
 };

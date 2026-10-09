@@ -17,6 +17,7 @@ export const getCategories = () => api.get("/categories").then((r) => r.data);
 export const getMoods = () => api.get("/moods").then((r) => r.data);
 export const getMood = (key) => api.get(`/moods/${key}`).then((r) => r.data);
 export const postMoodRecommend = (body) => api.post("/mood/recommend", body).then((r) => r.data);
+export const getMoodWeekly = () => api.get("/mood/weekly").then((r) => r.data);
 export const updateCountries = (body) => api.put("/me/countries", body).then((r) => r.data);
 export const getInsight = (slug) => api.get(`/insight/${slug}`).then((r) => r.data);
 export const postScan = (body) => api.post("/scan", body).then((r) => r.data);
