@@ -28,8 +28,6 @@ export default function MoodPage() {
   useEffect(() => { getMoods().then(setMoods); }, []);
   useEffect(() => {
     getMood(selected).then(setDetail).catch(() => {});
-    setParams((p) => { p.set("selected", selected); return p; }, { replace: true });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
   useEffect(() => {
     if (user?.current_country) setCurrent((c) => c || user.current_country);
@@ -47,7 +45,10 @@ export default function MoodPage() {
 
   const current_mood = moods.find((m) => m.key === selected);
   const dropLog = () => setParams((p) => { p.delete("log"); return p; }, { replace: true });
-  const selectMood = (key) => { setResult(null); setError(""); setSelected(key); if (logId) dropLog(); };
+  const selectMood = (key) => {
+    setResult(null); setError(""); setSelected(key);
+    setParams({ selected: key }, { replace: true });
+  };
 
   const ask = async () => {
     setLoading(true); setError("");

@@ -461,6 +461,8 @@ async def list_ai_favorites(user=Depends(require_user), db=Depends(get_db)):
 
 @api_router.post("/ai-favorites")
 async def add_ai_favorite(req: AiFavoriteRequest, user=Depends(require_user), db=Depends(get_db)):
+    if not req.name.strip():
+        raise HTTPException(status_code=422, detail="Nama saran tidak boleh kosong")
     await db.execute(text(
         "insert into ai_favorites(user_id,name,kind,why,origin_tag,mood_key) "
         "values(cast(:uid as uuid),:name,:kind,:why,:tag,:mood) "

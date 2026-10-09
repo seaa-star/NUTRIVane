@@ -1,0 +1,40 @@
+{
+  "summary": "Tested Riwayat Mood, Favoritkan Saran AI, and Pengingat Check-in features end-to-end. Backend: 16/16 pytest cases pass against the preview URL (/api/mood/history auth+401+isolation; /api/mood/history/{id} auth+404 for other user and nonexistent+401; /api/ai-favorites GET/POST/DELETE with case-insensitive dedupe, kind/origin_tag coercion, empty-name 422, cross-user no-op delete, 401 without auth; /api/me includes ai_favorites; /api/mood/recommend returns date in YYYY-MM-DD; regression on /api/health, /api/home, /api/mood/weekly, /api/favorites). Frontend at 390px: /profile (Asha) shows profile-mood-history with 10 items + profile-ai-favorites with 1 pre-existing fav; clicking a history item navigates to /mood?selected=<key>&log=<id>, mood-ai-result renders with mood-ai-source='Riwayat' and mood-history-badge visible. Guest heart on /mood shows error toast 'Masuk dulu untuk menyimpan saran AI ke favorit.' and does not save. Asha heart on an item WITHOUT recipe (Katsudon, idx 1 — no mood-ai-item-link ancestor) toggles aria-pressed to true, toast 'Saran AI disimpan ke favorit', item appears in /profile ai-favorites with profile-ai-fav-remove-<id>; clicking the remove button removes it with toast 'Dihapus dari favorit'. Home check-in reminder: guest with cleared storage sees home-checkin-reminder with CTA; dismiss hides it and persists via nv_reminder_dismissed=<today>; new user Dewi (fresh uid, 0 logs) sees reminder + home-mood-chart-empty, CTA navigates to /mood. No horizontal overflow on /, /mood, /profile. No console errors. ONE confirmed frontend bug (see below).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MoodPage.selectMood / dropLog",
+        "issue": "After opening a history item (URL has log=<id>), clicking a different mood-option-<key> does clear the AI result visually but does NOT remove the 'log' query param from the URL. Observed URL after selecting a different mood: /mood?selected=perut-nyaman&log=17 (expected: 'log' removed). The dropLog() call races with the [selected] useEffect's setParams((p) => p.set('selected', ...), {replace: true}) which uses a stale snapshot of params that still contains log. Spec explicitly requires 'Selecting a different mood option clears the result and removes \\'log\\' from the URL.'",
+        "selector": "/app/frontend/src/pages/MoodPage.jsx:29-33, 49-50",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_mood_history_and_ai_favs.py",
+    "/app/test_reports/pytest/mood_history_ai_favs.xml"
+  ],
+  "action_items": [
+    "Fix MoodPage.jsx so selectMood/dropLog actually removes 'log' from the URL. Simplest fix: in the useEffect([selected]), setParams in a form that both sets 'selected' AND removes 'log' when the user manually picked a mood. One option: const selectMood = (key) => { setResult(null); setError(''); setSelected(key); setParams((p) => { p.set('selected', key); p.delete('log'); return p; }, { replace: true }); }; and drop the setParams inside the [selected] effect (or guard it). This avoids the race where the [selected] effect's setParams uses a snapshot that still has log."
+  ],
+  "critical_code_review_comments": [
+    "MoodPage.jsx: Two setParams calls fire in the same tick (dropLog + [selected] effect) with functional updaters that both read current URLSearchParams. react-router v6 commits each navigate synchronously but React re-reads params at render time, so the effect's updater may win and re-add log via its stale `p`. Prefer consolidating URL writes into a single setParams per user interaction.",
+    "AuthContext.toggleAiFavorite: findAiFavorite in deps re-creates toggleAiFavorite on every aiFavorites change — fine, but ensure callers (FavButton) don't memoize stale onClick references.",
+    "server.py add_ai_favorite: validation uses Pydantic min_length=1 on `name` but the stored value is `req.name.strip()`. A name of only whitespace (e.g. '   ') would pass Pydantic and be stored as empty string. Consider adding a validator or stripping before length check.",
+    "server.py mood_history: `item_names` is sliced to 5 after mapping, but iteration still processes all items — minor; acceptable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mood_history_and_ai_favs.py",
+    "/app/memory/dev_token.txt"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~90% (1 bug: log param not dropped on mood switch)"},
+  "test_credentials": "Asha token in /app/memory/dev_token.txt; mint via cd /app/backend && /root/.venv/bin/python scripts/dev_token.py <uuid> '<name>'. Asha 11111111-1111-4111-8111-111111111111, Budi 22222222-2222-4222-8222-222222222222, Dewi 44444444-4444-4444-8444-444444444444.",
+  "seed_data_creation": "Via tests: created+deleted TEST_Es Teh Jahe Hangat and TEST_Coerce Kind ai_favorites for Asha; added one mood_logs row for Budi via /api/mood/recommend; added+removed 'Katsudon' ai_favorite for Asha via UI; dismissed guest reminder for today.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend fully passes (16/16). Only one frontend bug: MoodPage selectMood does not remove 'log' from URL (race between dropLog and [selected] useEffect's setParams). After main agent fix, re-run only the Profile→Mood→select-different-mood flow in Playwright and verify URL no longer contains 'log='. All other features (heart on recipe/non-recipe items, remove from profile, guest toast, reminder visibility/dismiss/persistence, mood chart on home for new user) verified working.",
+  "rca of the issue": "In /app/frontend/src/pages/MoodPage.jsx, selectMood calls setSelected(key) and then dropLog() when logId is truthy. dropLog uses setParams((p) => { p.delete('log'); return p; }). Meanwhile, the useEffect dependent on [selected] also calls setParams((p) => { p.set('selected', selected); return p; }). Because react-router's functional updater receives the current URLSearchParams snapshot and both setParams happen within React's batched render cycle, the [selected] effect runs after the state updates and its functional updater reads params that may still contain log (if committed order gets reversed) OR writes a result that re-includes log. The net effect observed in testing: URL retained log=17 even after selecting a different mood (/mood?selected=perut-nyaman&log=17). Reproduction: open /profile as Asha → click any profile-mood-history-<id> → on /mood click any different mood-option-<key> → inspect URL. Mitigation: perform a single consolidated setParams in selectMood that both sets selected and deletes log, and remove the setParams from the [selected] effect (or no-op it when the value is already in sync)."
+}
