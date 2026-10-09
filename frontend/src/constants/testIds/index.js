@@ -22,6 +22,9 @@ export const HOME = {
   moodChartEmpty: "home-mood-chart-empty",
   moodChartGuest: "home-mood-chart-guest",
   moodChartCta: "home-mood-chart-cta",
+  reminder: "home-checkin-reminder",
+  reminderCta: "home-checkin-reminder-cta",
+  reminderDismiss: "home-checkin-reminder-dismiss",
 };
 
 export const SCAN = {
@@ -69,6 +72,13 @@ export const PROFILE = {
   favEmpty: "profile-fav-empty",
   favCard: (s) => `profile-fav-${s}`,
   logoutBtn: "profile-logout-btn",
+  historyList: "profile-mood-history",
+  historyItem: (id) => `profile-mood-history-${id}`,
+  historyEmpty: "profile-mood-history-empty",
+  aiFavList: "profile-ai-favorites",
+  aiFavItem: (id) => `profile-ai-fav-${id}`,
+  aiFavRemove: (id) => `profile-ai-fav-remove-${id}`,
+  aiFavEmpty: "profile-ai-favorites-empty",
 };
 
 export const RECIPES = {
@@ -105,4 +115,6 @@ export const MOOD = {
   aiLoading: "mood-ai-loading",
   retryBtn: "mood-ai-retry-btn",
   shareBtn: "mood-ai-share-btn",
+  favBtn: (i) => `mood-ai-fav-btn-${i}`,
+  historyBadge: "mood-history-badge",
 };

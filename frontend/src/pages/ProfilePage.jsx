@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { Flame, Utensils, CalendarCheck, LogOut, Heart, ArrowLeft } from "lucide-react";
 import Layout from "@/components/Layout";
 import { RecipeCard, SectionHead } from "@/components/common";
+import { MoodHistory } from "@/components/profile/MoodHistory";
+import { AiFavorites } from "@/components/profile/AiFavorites";
 import { useAuth } from "@/context/AuthContext";
 import { getFavorites } from "@/lib/api";
 import { PROFILE } from "@/constants/testIds";
@@ -71,6 +73,9 @@ export default function ProfilePage() {
             </div>
           )}
         </section>
+
+        <AiFavorites />
+        <MoodHistory />
 
         <button onClick={async () => { await signOut(); navigate("/login"); }} data-testid={PROFILE.logoutBtn}
           className="nv-btn-primary w-full" style={{ background: "#fff", color: "var(--nv-accent)", border: "1px solid var(--nv-line)" }}>

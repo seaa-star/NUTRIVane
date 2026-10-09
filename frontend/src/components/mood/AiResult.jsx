@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { Utensils, CupSoda, ArrowRight, Lightbulb, Sparkles, RefreshCw, Share2 } from "lucide-react";
+import { Utensils, CupSoda, ArrowRight, Lightbulb, Sparkles, RefreshCw, Share2, Heart, History } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { MOOD } from "@/constants/testIds";
 
 export function buildShareText(result) {
@@ -24,7 +25,26 @@ const TAG = {
   umum: { label: "Umum", bg: "#eef1ea", color: "var(--nv-muted)" },
 };
 
-function Item({ it, index }) {
+function FavButton({ it, index, moodKey }) {
+  const { isFavorite, toggleFavorite, isAiFavorite, toggleAiFavorite, user } = useAuth();
+  const on = it.recipe ? isFavorite(it.recipe.slug) : isAiFavorite(it.name);
+  const onClick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (it.recipe) {
+      if (!user) { toggleAiFavorite(it, moodKey); return; }
+      toggleFavorite(it.recipe.slug);
+    } else toggleAiFavorite(it, moodKey);
+  };
+  return (
+    <button type="button" onClick={onClick} data-testid={MOOD.favBtn(index)} aria-pressed={on} aria-label={on ? "Hapus dari favorit" : "Simpan ke favorit"}
+      className="grid place-items-center w-9 h-9 rounded-full shrink-0 transition-transform active:scale-90"
+      style={{ background: on ? "var(--nv-accent)" : "var(--nv-bg)", color: on ? "#fff" : "var(--nv-accent)" }}>
+      <Heart size={15} fill={on ? "currentColor" : "none"} />
+    </button>
+  );
+}
+
+function Item({ it, index, moodKey }) {
   const Icon = it.kind === "minuman" ? CupSoda : Utensils;
   const tag = TAG[it.origin_tag] || TAG.umum;
   const body = (
@@ -44,6 +64,7 @@ function Item({ it, index }) {
           </span>
         )}
       </div>
+      <FavButton it={it} index={index} moodKey={moodKey} />
     </div>
   );
   const cls = "nv-card p-3.5 block nv-rise";
@@ -61,10 +82,16 @@ export function AiResult({ result, onRetry }) {
           <p className="nv-eyebrow flex items-center gap-1.5" style={{ color: "var(--nv-green)" }}>
             <Sparkles size={12} /> Rekomendasi AI {result.mood?.emoji}
           </p>
-          <span data-testid={MOOD.aiSource} className="text-[0.62rem] font-bold uppercase tracking-wider" style={{ color: "var(--nv-muted)" }}>
-            {result.source === "ai" ? "Gemini" : "Pilihan kurasi"}
+          <span data-testid={MOOD.aiSource} className="text-[0.62rem] font-bold uppercase tracking-wider flex items-center gap-1" style={{ color: "var(--nv-muted)" }}>
+            {result.source === "riwayat" ? <><History size={11} /> Riwayat</> : result.source === "ai" ? "Gemini" : "Pilihan kurasi"}
           </span>
         </div>
+        {result.source === "riwayat" && result.created_at && (
+          <p data-testid={MOOD.historyBadge} className="text-[0.7rem] mt-1.5" style={{ color: "var(--nv-muted)" }}>
+            Check-in {new Date(result.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+            {result.story ? ` · "${result.story.slice(0, 80)}${result.story.length > 80 ? "…" : ""}"` : ""}
+          </p>
+        )}
         <h2 data-testid={MOOD.aiHeadline} className="font-display text-xl font-semibold mt-2 leading-tight" style={{ color: "var(--nv-green-deep)" }}>{result.headline}</h2>
         {result.summary && <p data-testid={MOOD.aiSummary} className="text-sm mt-2 leading-relaxed" style={{ color: "var(--nv-ink)" }}>{result.summary}</p>}
         {(result.current_country || result.origin_country) && (
@@ -76,7 +103,7 @@ export function AiResult({ result, onRetry }) {
         )}
       </div>
 
-      <div className="space-y-3">{result.items.map((it, i) => <Item key={`${it.name}-${i}`} it={it} index={i} />)}</div>
+      <div className="space-y-3">{result.items.map((it, i) => <Item key={`${it.name}-${i}`} it={it} index={i} moodKey={result.mood?.key} />)}</div>
 
       {result.tip && (
         <div data-testid={MOOD.aiTip} className="flex gap-3 items-start rounded-2xl p-4" style={{ background: "var(--nv-accent-soft)" }}>

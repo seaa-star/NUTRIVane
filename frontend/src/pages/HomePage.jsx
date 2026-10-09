@@ -4,16 +4,19 @@ import { ArrowRight, Flame, Check, Camera, LogIn } from "lucide-react";
 import Layout from "@/components/Layout";
 import { RecipeCard, SectionHead } from "@/components/common";
 import { MoodWeekChart } from "@/components/home/MoodWeekChart";
-import { getHome } from "@/lib/api";
+import { CheckinReminder } from "@/components/home/CheckinReminder";
+import { getHome, getMoodWeekly } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { HOME } from "@/constants/testIds";
 
 export default function HomePage() {
   const [data, setData] = useState(null);
+  const [moodWeek, setMoodWeek] = useState(null);
   const { user, stats } = useAuth();
 
   useEffect(() => {
     getHome().then(setData).catch(console.error);
+    getMoodWeekly().then(setMoodWeek).catch(() => setMoodWeek(null));
   }, [user?.id]);
 
   if (!data) return <Layout><div className="p-5 text-sm" style={{ color: "var(--nv-muted)" }}>Memuat…</div></Layout>;
@@ -40,6 +43,8 @@ export default function HomePage() {
           </h1>
           <p className="mt-2.5 text-sm leading-relaxed" style={{ color: "var(--nv-muted)" }}>{data.subhead}</p>
         </section>
+
+        <CheckinReminder weekly={moodWeek} partOfDay={data.part_of_day} />
 
         {!data.authenticated && (
           <Link to="/login" data-testid={HOME.loginBanner}
@@ -89,7 +94,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <MoodWeekChart userId={user?.id} />
+        <MoodWeekChart data={moodWeek} />
 
         {/* moods */}
         <section className="nv-rise" style={{ animationDelay: "120ms" }}>

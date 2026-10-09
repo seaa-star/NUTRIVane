@@ -39,3 +39,8 @@ alter table public.favorites
 alter table public.mood_logs enable row level security;
 create policy "own mood logs read"   on public.mood_logs for select to authenticated using ((select auth.uid()) = user_id);
 create policy "own mood logs insert" on public.mood_logs for insert to authenticated with check ((select auth.uid()) = user_id);
+
+alter table public.ai_favorites enable row level security;
+create policy "own ai favorites read"   on public.ai_favorites for select to authenticated using ((select auth.uid()) = user_id);
+create policy "own ai favorites insert" on public.ai_favorites for insert to authenticated with check ((select auth.uid()) = user_id);
+create policy "own ai favorites delete" on public.ai_favorites for delete to authenticated using ((select auth.uid()) = user_id);

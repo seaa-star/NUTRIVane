@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase, authEnabled, getDevToken } from "@/lib/supabase";
-import { getMe, addFavorite, removeFavorite } from "@/lib/api";
+import { getMe, addFavorite, removeFavorite, addAiFavorite, removeAiFavorite } from "@/lib/api";
 
 const AuthContext = createContext(null);
 
@@ -9,6 +9,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState(null);
   const [favorites, setFavorites] = useState([]);
+  const [aiFavorites, setAiFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadMe = useCallback(async () => {
@@ -17,10 +18,12 @@ export function AuthProvider({ children }) {
       setUser(me.user);
       setStats(me.stats);
       setFavorites(me.favorites);
+      setAiFavorites(me.ai_favorites || []);
     } catch (e) {
       setUser(null);
       setStats(null);
       setFavorites([]);
+      setAiFavorites([]);
       if (!supabase) localStorage.removeItem("nv_dev_token");
     } finally {
       setLoading(false);
@@ -37,7 +40,7 @@ export function AuthProvider({ children }) {
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) loadMe();
-      else { setUser(null); setStats(null); setFavorites([]); setLoading(false); }
+      else { setUser(null); setStats(null); setFavorites([]); setAiFavorites([]); setLoading(false); }
     });
     return () => sub.subscription.unsubscribe();
   }, [loadMe]);
@@ -54,7 +57,7 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     if (supabase) await supabase.auth.signOut();
     localStorage.removeItem("nv_dev_token");
-    setUser(null); setStats(null); setFavorites([]);
+    setUser(null); setStats(null); setFavorites([]); setAiFavorites([]);
   }, []);
 
   const toggleFavorite = useCallback(async (slug) => {
@@ -70,11 +73,28 @@ export function AuthProvider({ children }) {
     }
   }, [favorites]);
 
+  const findAiFavorite = useCallback((name) => aiFavorites.find((f) => f.name.toLowerCase() === (name || "").toLowerCase()), [aiFavorites]);
+
+  const toggleAiFavorite = useCallback(async (item, moodKey) => {
+    if (!user) { toast.error("Masuk dulu untuk menyimpan saran AI ke favorit."); return; }
+    const existing = findAiFavorite(item.name);
+    try {
+      const list = existing
+        ? await removeAiFavorite(existing.id)
+        : await addAiFavorite({ name: item.name, kind: item.kind, why: item.why, origin_tag: item.origin_tag, mood_key: moodKey });
+      setAiFavorites(list);
+      toast.success(existing ? "Dihapus dari favorit" : "Saran AI disimpan ke favorit");
+    } catch (e) {
+      toast.error("Gagal menyimpan favorit");
+    }
+  }, [user, findAiFavorite]);
+
   const value = useMemo(() => ({
-    user, stats, favorites, loading, authEnabled,
+    user, stats, favorites, aiFavorites, loading, authEnabled,
     isFavorite: (slug) => favorites.includes(slug),
-    toggleFavorite, signInWithGoogle, signOut, refresh: loadMe, setStats,
-  }), [user, stats, favorites, loading, toggleFavorite, signInWithGoogle, signOut, loadMe]);
+    isAiFavorite: (name) => Boolean(findAiFavorite(name)),
+    toggleFavorite, toggleAiFavorite, signInWithGoogle, signOut, refresh: loadMe, setStats,
+  }), [user, stats, favorites, aiFavorites, loading, toggleFavorite, toggleAiFavorite, findAiFavorite, signInWithGoogle, signOut, loadMe]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

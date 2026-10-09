@@ -57,6 +57,14 @@ class CountriesRequest(BaseModel):
     origin_country: str = Field(default="", max_length=60)
 
 
+class AiFavoriteRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(default="makanan", max_length=20)
+    why: str = Field(default="", max_length=400)
+    origin_tag: str = Field(default="umum", max_length=20)
+    mood_key: Optional[str] = Field(default=None, max_length=40)
+
+
 # ----------------------------- AI helpers -----------------------------
 async def generate_insight_text(recipe: dict) -> str:
     """Simple, cost-efficient AI (standard model) for a short flavor insight."""
@@ -287,6 +295,22 @@ async def favorite_slugs(db, user_id: str) -> list:
     return [r[0] for r in rows]
 
 
+async def ai_favorites(db, user_id: str) -> list:
+    rows = (await db.execute(text(
+        "select id,name,kind,why,origin_tag,mood_key,created_at from ai_favorites "
+        "where user_id=cast(:uid as uuid) order by created_at desc"), {"uid": user_id})).all()
+    return [{**row_dict(r), "created_at": r.created_at.isoformat()} for r in rows]
+
+
+async def moods_map(db) -> dict:
+    return {r.key: {"key": r.key, "label": r.label, "emoji": r.emoji}
+            for r in (await db.execute(text("select key,label,emoji from moods"))).all()}
+
+
+def _json(v):
+    return json.loads(v) if isinstance(v, str) else (v or {})
+
+
 # ----------------------------- Endpoints -----------------------------
 @api_router.get("/")
 async def root():
@@ -393,7 +417,67 @@ async def mood_recommend(req: MoodRecommendRequest, user=Depends(optional_user),
         ), {"cur": current_country or None, "org": origin_country or None, "uid": user["id"]})
     await db.commit()
     return {**rec, "mood": {k: mood[k] for k in ("key", "label", "emoji")}, "source": source,
+            "date": datetime.now(APP_TZ).date().isoformat(),
             "current_country": current_country, "origin_country": origin_country, "saved_to_account": bool(user)}
+
+
+@api_router.get("/mood/history")
+async def mood_history(limit: int = 20, user=Depends(require_user), db=Depends(get_db)):
+    moods = await moods_map(db)
+    rows = (await db.execute(text(
+        "select id,mood_key,story,current_country,origin_country,recommendation,created_at from mood_logs "
+        "where user_id=cast(:uid as uuid) order by created_at desc limit :limit"
+    ), {"uid": user["id"], "limit": max(1, min(limit, 50))})).all()
+    out = []
+    for r in rows:
+        rec = _json(r.recommendation)
+        out.append({
+            "id": r.id, "mood": moods.get(r.mood_key, {"key": r.mood_key, "label": r.mood_key, "emoji": ""}),
+            "story": r.story, "current_country": r.current_country or "", "origin_country": r.origin_country or "",
+            "headline": rec.get("headline", ""), "item_names": [it.get("name") for it in rec.get("items", [])][:5],
+            "created_at": r.created_at.isoformat(),
+        })
+    return out
+
+
+@api_router.get("/mood/history/{log_id}")
+async def mood_history_detail(log_id: int, user=Depends(require_user), db=Depends(get_db)):
+    row = (await db.execute(text(
+        "select id,mood_key,story,current_country,origin_country,recommendation,created_at from mood_logs "
+        "where id=:id and user_id=cast(:uid as uuid)"), {"id": log_id, "uid": user["id"]})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Riwayat tidak ditemukan")
+    moods = await moods_map(db)
+    rec = _json(row.recommendation)
+    return {**rec, "id": row.id, "mood": moods.get(row.mood_key, {"key": row.mood_key, "label": row.mood_key, "emoji": ""}),
+            "story": row.story, "current_country": row.current_country or "", "origin_country": row.origin_country or "",
+            "source": "riwayat", "created_at": row.created_at.isoformat()}
+
+
+@api_router.get("/ai-favorites")
+async def list_ai_favorites(user=Depends(require_user), db=Depends(get_db)):
+    return await ai_favorites(db, user["id"])
+
+
+@api_router.post("/ai-favorites")
+async def add_ai_favorite(req: AiFavoriteRequest, user=Depends(require_user), db=Depends(get_db)):
+    await db.execute(text(
+        "insert into ai_favorites(user_id,name,kind,why,origin_tag,mood_key) "
+        "values(cast(:uid as uuid),:name,:kind,:why,:tag,:mood) "
+        "on conflict (user_id, lower(name)) do update set why=excluded.why, kind=excluded.kind, origin_tag=excluded.origin_tag"
+    ), {"uid": user["id"], "name": req.name.strip(), "kind": "minuman" if req.kind == "minuman" else "makanan",
+        "why": req.why.strip(), "tag": req.origin_tag if req.origin_tag in ("lokal", "asal", "umum") else "umum",
+        "mood": req.mood_key})
+    await db.commit()
+    return await ai_favorites(db, user["id"])
+
+
+@api_router.delete("/ai-favorites/{fav_id}")
+async def remove_ai_favorite(fav_id: int, user=Depends(require_user), db=Depends(get_db)):
+    await db.execute(text("delete from ai_favorites where id=:id and user_id=cast(:uid as uuid)"),
+                     {"id": fav_id, "uid": user["id"]})
+    await db.commit()
+    return await ai_favorites(db, user["id"])
 
 
 DAY_LABELS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
@@ -491,7 +575,8 @@ async def profile_countries(db, user_id: str) -> dict:
 async def me(user=Depends(require_user), db=Depends(get_db)):
     await upsert_profile(db, user)
     return {"user": {**user, **(await profile_countries(db, user["id"]))},
-            "stats": await user_stats(db, user["id"]), "favorites": await favorite_slugs(db, user["id"])}
+            "stats": await user_stats(db, user["id"]), "favorites": await favorite_slugs(db, user["id"]),
+            "ai_favorites": await ai_favorites(db, user["id"])}
 
 
 @api_router.put("/me/countries")

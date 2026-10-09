@@ -7,7 +7,7 @@ import { MoodSelector } from "@/components/mood/MoodSelector";
 import { StoryForm } from "@/components/mood/StoryForm";
 import { AiResult } from "@/components/mood/AiResult";
 import { useAuth } from "@/context/AuthContext";
-import { getMoods, getMood, postMoodRecommend } from "@/lib/api";
+import { getMoods, getMood, postMoodRecommend, getMoodLog } from "@/lib/api";
 import { MOOD } from "@/constants/testIds";
 
 export default function MoodPage() {
@@ -23,26 +23,39 @@ export default function MoodPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const resultRef = useRef(null);
+  const logId = params.get("log");
 
   useEffect(() => { getMoods().then(setMoods); }, []);
   useEffect(() => {
     getMood(selected).then(setDetail).catch(() => {});
-    setParams({ selected }, { replace: true });
-    setResult(null);
+    setParams((p) => { p.set("selected", selected); return p; }, { replace: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
   useEffect(() => {
     if (user?.current_country) setCurrent((c) => c || user.current_country);
     if (user?.origin_country) setOrigin((o) => o || user.origin_country);
   }, [user]);
+  useEffect(() => {
+    if (!logId || !user) return;
+    getMoodLog(logId).then((log) => {
+      setSelected(log.mood.key); setResult(log); setStory(log.story || "");
+      if (log.current_country) setCurrent(log.current_country);
+      if (log.origin_country) setOrigin(log.origin_country);
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    }).catch(() => setError("Riwayat tidak ditemukan."));
+  }, [logId, user]);
 
   const current_mood = moods.find((m) => m.key === selected);
+  const dropLog = () => setParams((p) => { p.delete("log"); return p; }, { replace: true });
+  const selectMood = (key) => { setResult(null); setError(""); setSelected(key); if (logId) dropLog(); };
 
   const ask = async () => {
     setLoading(true); setError("");
     try {
       const res = await postMoodRecommend({ mood_key: selected, story, current_country: current, origin_country: origin });
       setResult(res);
+      if (res.date) localStorage.setItem("nv_mood_last_checkin", res.date);
+      if (logId) dropLog();
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (e) {
       setError("Rekomendasi belum bisa dibuat. Coba lagi sebentar ya.");
@@ -64,7 +77,7 @@ export default function MoodPage() {
           </p>
         </div>
 
-        <MoodSelector moods={moods} selected={selected} onSelect={setSelected} />
+        <MoodSelector moods={moods} selected={selected} onSelect={selectMood} />
 
         <StoryForm story={story} setStory={setStory} current={current} setCurrent={setCurrent}
           origin={origin} setOrigin={setOrigin} onSubmit={ask} loading={loading} moodLabel={current_mood?.label} />

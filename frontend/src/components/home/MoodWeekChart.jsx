@@ -1,8 +1,6 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, LogIn, ArrowRight } from "lucide-react";
 import { SectionHead } from "@/components/common";
-import { getMoodWeekly } from "@/lib/api";
 import { HOME } from "@/constants/testIds";
 
 function Bar({ d, max }) {
@@ -19,9 +17,7 @@ function Bar({ d, max }) {
   );
 }
 
-export function MoodWeekChart({ userId }) {
-  const [data, setData] = useState(null);
-  useEffect(() => { getMoodWeekly().then(setData).catch(() => setData(null)); }, [userId]);
+export function MoodWeekChart({ data }) {
   if (!data) return null;
 
   const max = Math.max(1, ...data.days.map((d) => d.count));
