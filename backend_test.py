@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 # Configuration
-BASE_URL = "https://nutri-mood-ai.preview.emergentagent.com/api"
+BASE_URL = "https://nutrivane-rempah.preview.emergentagent.com/api"
 TIMEOUT = 120  # 120 seconds for AI calls (Gemini + Tavily)
 
 # Load dev token

@@ -8,7 +8,7 @@ import json
 import time
 
 # Configuration
-BASE_URL = "https://nutri-mood-ai.preview.emergentagent.com/api"
+BASE_URL = "https://nutrivane-rempah.preview.emergentagent.com/api"
 TIMEOUT = 120  # 120 seconds for AI calls (Gemini + Tavily)
 
 def print_section(title):

@@ -4,7 +4,7 @@ import subprocess
 import pytest
 import requests
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://nutri-mood-ai.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://nutrivane-rempah.preview.emergentagent.com').rstrip('/')
 ASHA_UID = "11111111-1111-4111-8111-111111111111"
 BUDI_UID = "22222222-2222-4222-8222-222222222222"
 
