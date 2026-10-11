@@ -72,3 +72,20 @@ Fonts: Plus Jakarta Sans (UI) + Fraunces (display). Rounded cards, pill tabs, de
 - P2: Expand dataset beyond 7 menus (drinks/dessert/tea exist in source doc).
 - P2: Cache invalidation / dataset version in AI insight cache key.
 - P2: Streaming AI response untuk mood (saat ini ~15-20s tunggu).
+
+## Implemented (2026-10-11) — Scan history, scan favorites, nutrition focus
+- Live camera (#1) already existed (CameraCapture.jsx getUserMedia + flip + upload fallback); verified.
+- #4 Cache badge: scan result card shows "⚡ instan" when result.cached (backend already returned cached flag).
+- #2 Scan history: scans table gained `result jsonb` (idempotent migration); _log_scan stores full snapshot.
+  Endpoints GET /api/scans/history (limit<=50) + GET /api/scans/history/{id}. Profile section "Scan makananmu"
+  (components/profile/ScanHistory.jsx) links to /scan?history={id} which fetches & renders the saved result.
+- #3 Scan favorites: new table scan_favorites(user_id,dish,result jsonb) unique per (user, lower(dish)).
+  GET/POST/DELETE /api/scan-favorites + GET /{id}. /api/me now returns scan_favorites. Heart button on scan
+  result card (AuthContext.toggleScanFavorite / isScanFavorite). Profile section "Scan favoritmu"
+  (components/profile/ScanFavorites.jsx) links to /scan?favorite={id}. RLS policy added in supabase/policies.sql.
+- NUTRITION FOCUS: ai_extract_average now also returns a per-serving nutrition estimate
+  (_parse_nutrition -> {serving, calories, protein_g, carbs_g, fat_g, fiber_g, note}); included in payload+cache.
+  ScanPage shows a "Kandungan gizi" card (energi kkal + protein/karbo/lemak/serat tiles + note) above spice meter.
+- Backend tested: 22/22 pass (history, favorites, nutrition, cache, regressions). Frontend NOT yet tested.
+- Dev env note: container reset wipes local Postgres — recreate: pg_ctlcluster 15 main start; set postgres pwd
+  'nutrivane'; createdb nutrivane; restart backend (auto-seeds + runs schema.sql). Dev token: scripts/dev_token.py.

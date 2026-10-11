@@ -108,7 +108,7 @@ export default function ScanPage() {
             Kenali isi piringmu.
           </h1>
           <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--nv-muted)" }}>
-            Foto makananmu, AI akan mengenalinya, mencari resep dari beberapa sumber di web, lalu merata-ratakan bumbunya — lengkap dengan sumbernya.
+            Foto makananmu, AI akan mengenalinya, mencari resep dari beberapa sumber di web, lalu merata-ratakan bumbu dan memperkirakan kandungan gizinya — lengkap dengan sumbernya.
           </p>
         </div>
 
@@ -160,7 +160,7 @@ export default function ScanPage() {
                 <div>
                   <p className="font-bold text-sm" style={{ color: "var(--nv-green-deep)" }}>Scan pintar (AI + web)</p>
                   <p className="text-xs leading-snug" style={{ color: "var(--nv-muted)" }}>
-                    AI kenali makanan dari foto, cari resep online, lalu rata-ratakan bumbunya dengan sumber.
+                    AI kenali makanan dari foto, cari resep online, rata-ratakan bumbu & perkirakan gizinya, dengan sumber.
                   </p>
                 </div>
               </div>
@@ -302,6 +302,53 @@ export default function ScanPage() {
                 </p>
               </div>
             </div>
+
+            {result.nutrition && (
+              <div className="nv-card p-5" data-testid={SCAN.resultNutrition}>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <p className="nv-eyebrow" style={{ color: "var(--nv-accent)" }}>Kandungan gizi</p>
+                    <h3 className="font-display text-lg font-semibold" style={{ color: "var(--nv-green-deep)" }}>
+                      Estimasi {result.nutrition.serving || "per porsi"}
+                    </h3>
+                  </div>
+                  <span className="grid place-items-center w-10 h-10 rounded-xl shrink-0" style={{ background: "var(--nv-accent-soft)" }}>
+                    <Flame size={18} color="var(--nv-accent)" />
+                  </span>
+                </div>
+
+                <div className="rounded-2xl p-4 flex items-end justify-between" style={{ background: "var(--nv-green-soft)" }}>
+                  <div>
+                    <p className="text-[0.68rem] font-bold uppercase tracking-wider" style={{ color: "var(--nv-muted)" }}>Energi</p>
+                    <p className="font-display text-3xl font-bold leading-none mt-1" data-testid={SCAN.nutritionCalories} style={{ color: "var(--nv-green-deep)" }}>
+                      {Math.round(result.nutrition.calories)}
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold" style={{ color: "var(--nv-muted)" }}>kkal</span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2.5 mt-3">
+                  {[
+                    { label: "Protein", value: result.nutrition.protein_g, color: "var(--nv-green)" },
+                    { label: "Karbo", value: result.nutrition.carbs_g, color: "#b4791f" },
+                    { label: "Lemak", value: result.nutrition.fat_g, color: "var(--nv-accent)" },
+                    { label: "Serat", value: result.nutrition.fiber_g, color: "var(--nv-green-mid)" },
+                  ].map((m) => (
+                    <div key={m.label} className="rounded-2xl p-2.5 text-center" style={{ background: "var(--nv-bg)", border: "1px solid var(--nv-line)" }}>
+                      <p className="font-display text-lg font-bold leading-none" style={{ color: m.color }}>{Math.round(m.value)}<span className="text-[0.6rem] font-semibold">g</span></p>
+                      <p className="text-[0.62rem] mt-1 font-semibold" style={{ color: "var(--nv-muted)" }}>{m.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {result.nutrition.note && (
+                  <p className="text-xs mt-3 leading-relaxed" style={{ color: "var(--nv-ink)" }}>{result.nutrition.note}</p>
+                )}
+                <p className="text-[0.7rem] mt-2 leading-snug" style={{ color: "var(--nv-muted)" }}>
+                  Estimasi AI dari beberapa resep — panduan umum, bukan nilai gizi pasti atau saran medis.
+                </p>
+              </div>
+            )}
 
             {result.spices && result.spices.length > 0 && (
               <div className="nv-card p-5" data-testid={SCAN.resultSpice}>

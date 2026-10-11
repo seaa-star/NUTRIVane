@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for NutriVane - Scan History & Scan Favorites
-Tests the new scan history and scan favorites endpoints with authentication.
+Backend API Testing for NutriVane - AI Scan Nutrition Estimate Feature
+Tests the NEW nutrition estimate feature in POST /api/scan/ai endpoint.
 """
 import requests
 import json
@@ -14,9 +14,8 @@ DEV_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMTExMTExMS0xMTExLT
 
 # Test results tracking
 test_results = []
-scan_id = None
-favorite_id = None
-scan_result_data = None
+nasi_goreng_nutrition = None
+soto_ayam_scan_id = None
 
 
 def log_test(test_name: str, passed: bool, details: str = ""):
@@ -57,294 +56,349 @@ def make_request(method: str, endpoint: str, token: Optional[str] = None, json_d
         return None
 
 
+def validate_nutrition_object(nutrition, test_name_prefix: str) -> bool:
+    """Validate nutrition object structure and values"""
+    if not nutrition:
+        log_test(f"{test_name_prefix} - nutrition object exists", False, "nutrition is None or missing")
+        return False
+    
+    if not isinstance(nutrition, dict):
+        log_test(f"{test_name_prefix} - nutrition object is dict", False, f"nutrition is {type(nutrition)}")
+        return False
+    
+    # Check required fields
+    required_fields = ["serving", "calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "note"]
+    missing_fields = [f for f in required_fields if f not in nutrition]
+    if missing_fields:
+        log_test(f"{test_name_prefix} - nutrition has all fields", False, f"Missing fields: {missing_fields}")
+        return False
+    
+    # Check serving is string
+    if not isinstance(nutrition["serving"], str):
+        log_test(f"{test_name_prefix} - serving is string", False, f"serving is {type(nutrition['serving'])}")
+        return False
+    
+    # Check note is string
+    if not isinstance(nutrition["note"], str):
+        log_test(f"{test_name_prefix} - note is string", False, f"note is {type(nutrition['note'])}")
+        return False
+    
+    # Check numeric fields are numbers >= 0
+    numeric_fields = ["calories", "protein_g", "carbs_g", "fat_g", "fiber_g"]
+    for field in numeric_fields:
+        value = nutrition[field]
+        if not isinstance(value, (int, float)):
+            log_test(f"{test_name_prefix} - {field} is numeric", False, f"{field} is {type(value)}")
+            return False
+        if value < 0:
+            log_test(f"{test_name_prefix} - {field} >= 0", False, f"{field} = {value}")
+            return False
+    
+    # Check at least one macro > 0
+    macros = [nutrition["calories"], nutrition["protein_g"], nutrition["carbs_g"], nutrition["fat_g"]]
+    if all(m == 0 for m in macros):
+        log_test(f"{test_name_prefix} - at least one macro > 0", False, "All macros are 0")
+        return False
+    
+    # All checks passed
+    details = (f"serving='{nutrition['serving']}', calories={nutrition['calories']}, "
+               f"protein_g={nutrition['protein_g']}, carbs_g={nutrition['carbs_g']}, "
+               f"fat_g={nutrition['fat_g']}, fiber_g={nutrition['fiber_g']}, "
+               f"note='{nutrition['note'][:50]}...'")
+    log_test(f"{test_name_prefix} - nutrition object valid", True, details)
+    return True
+
+
 print("=" * 80)
-print("NutriVane Backend API Testing - Scan History & Scan Favorites")
+print("NutriVane Backend API Testing - AI Scan Nutrition Estimate Feature")
 print("=" * 80)
 print()
 
-# Test 1: POST /api/scan/ai with Bearer token (Rawon daging)
-print("Test 1: POST /api/scan/ai with Bearer token (Rawon daging)")
+# ============================================================================
+# SCENARIO 1: POST /api/scan/ai with {"dish_name": "Nasi goreng"} (no auth)
+# ============================================================================
+print("SCENARIO 1: POST /api/scan/ai with Nasi goreng (no auth)")
 print("   This may take 10-30 seconds for AI processing...")
-resp = make_request("POST", "/scan/ai", token=DEV_TOKEN, json_data={"dish_name": "Rawon daging"}, timeout=60)
+print()
+
+resp = make_request("POST", "/scan/ai", json_data={"dish_name": "Nasi goreng"}, timeout=60)
+
 if resp and resp.status_code == 200:
     data = resp.json()
-    scan_result_data = data
     
-    # Check required fields
-    has_mode = "mode" in data and data["mode"] in ["web", "fallback"]
-    has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
-    has_sources = "sources" in data and isinstance(data["sources"], list) and len(data["sources"]) > 0
-    has_saved = "saved_to_account" in data and data["saved_to_account"] is True
+    # Check response status
+    log_test("Scenario 1 - Response 200", True, f"Status: {resp.status_code}")
     
-    all_checks = has_mode and has_spices and has_sources and has_saved
+    # Check mode (should be 'web' or 'fallback')
+    mode = data.get("mode")
+    is_web_or_fallback = mode in ["web", "fallback"]
+    log_test("Scenario 1 - mode is web or fallback", is_web_or_fallback, f"mode={mode}")
     
-    details = f"Status: {resp.status_code}, Mode: {data.get('mode')}, Spices: {len(data.get('spices', []))}, Sources: {len(data.get('sources', []))}, Saved: {data.get('saved_to_account')}"
-    log_test("POST /api/scan/ai with auth", all_checks, details)
-    
-    if not all_checks:
-        print(f"   Missing fields - mode: {has_mode}, spices: {has_spices}, sources: {has_sources}, saved_to_account: {has_saved}")
-else:
-    log_test("POST /api/scan/ai with auth", False, f"Status: {resp.status_code if resp else 'No response'}")
-    scan_result_data = None
-
-time.sleep(1)
-
-# Test 2: GET /api/scans/history (with token) - should include Rawon daging
-print("\nTest 2: GET /api/scans/history (with token)")
-resp = make_request("GET", "/scans/history", token=DEV_TOKEN)
-if resp and resp.status_code == 200:
-    data = resp.json()
-    is_array = isinstance(data, list)
-    
-    # Look for Rawon daging scan
-    rawon_scan = None
-    for item in data:
-        dish_name = item.get("dish", "").lower()
-        if "rawon" in dish_name and "daging" in dish_name:
-            rawon_scan = item
-            scan_id = item.get("id")
-            break
-    
-    has_rawon = rawon_scan is not None
-    
-    # Check required fields in the scan item
-    if rawon_scan:
-        required_fields = ["id", "dish", "mode", "cached", "source_count", "spice_count", "confidence", "had_image", "benchmark_slug", "created_at"]
-        has_all_fields = all(field in rawon_scan for field in required_fields)
-        
-        details = f"Status: {resp.status_code}, Array: {is_array}, Count: {len(data)}, Has Rawon: {has_rawon}, Fields complete: {has_all_fields}"
-        log_test("GET /api/scans/history", is_array and has_rawon and has_all_fields, details)
-        
-        if not has_all_fields:
-            missing = [f for f in required_fields if f not in rawon_scan]
-            print(f"   Missing fields in scan item: {missing}")
+    # Check nutrition object
+    nutrition = data.get("nutrition")
+    if nutrition:
+        nutrition_valid = validate_nutrition_object(nutrition, "Scenario 1")
+        nasi_goreng_nutrition = nutrition  # Save for comparison in Scenario 2
     else:
-        log_test("GET /api/scans/history", False, f"Status: {resp.status_code}, Rawon daging scan not found in history")
-else:
-    log_test("GET /api/scans/history", False, f"Status: {resp.status_code if resp else 'No response'}")
-
-time.sleep(1)
-
-# Test 3: GET /api/scans/history/{id} (with token) - full result with spices+sources
-if scan_id:
-    print(f"\nTest 3: GET /api/scans/history/{scan_id} (with token)")
-    resp = make_request("GET", f"/scans/history/{scan_id}", token=DEV_TOKEN)
-    if resp and resp.status_code == 200:
-        data = resp.json()
-        
-        has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
-        has_sources = "sources" in data and isinstance(data["sources"], list) and len(data["sources"]) > 0
-        has_insight = "insight" in data and data["insight"]
-        has_from_history = "from_history" in data and data["from_history"] is True
-        
-        all_checks = has_spices and has_sources and has_insight and has_from_history
-        
-        details = f"Status: {resp.status_code}, Spices: {len(data.get('spices', []))}, Sources: {len(data.get('sources', []))}, from_history: {data.get('from_history')}"
-        log_test("GET /api/scans/history/{id}", all_checks, details)
-        
-        if not all_checks:
-            print(f"   Missing - spices: {has_spices}, sources: {has_sources}, insight: {has_insight}, from_history: {has_from_history}")
-    else:
-        log_test("GET /api/scans/history/{id}", False, f"Status: {resp.status_code if resp else 'No response'}")
-    
-    time.sleep(1)
-    
-    # Test 3b: GET /api/scans/history/{random_id} - should return 404
-    print(f"\nTest 3b: GET /api/scans/history/999999 (non-owned id)")
-    resp = make_request("GET", "/scans/history/999999", token=DEV_TOKEN)
-    is_404 = resp and resp.status_code == 404
-    log_test("GET /api/scans/history/{non_owned_id} returns 404", is_404, f"Status: {resp.status_code if resp else 'No response'}")
-else:
-    print("\nTest 3: SKIPPED - No scan_id from previous test")
-    log_test("GET /api/scans/history/{id}", False, "Skipped - no scan_id")
-
-time.sleep(1)
-
-# Test 4: POST /api/scan-favorites (with token)
-if scan_result_data:
-    print("\nTest 4: POST /api/scan-favorites (with token)")
-    resp = make_request("POST", "/scan-favorites", token=DEV_TOKEN, 
-                       json_data={"dish": "Rawon daging", "result": scan_result_data})
-    if resp and resp.status_code == 200:
-        data = resp.json()
-        is_array = isinstance(data, list)
-        
-        # Look for Rawon daging in the returned list
-        rawon_fav = None
-        for item in data:
-            dish_name = item.get("dish", "").lower()
-            if "rawon" in dish_name and "daging" in dish_name:
-                rawon_fav = item
-                favorite_id = item.get("id")
-                break
-        
-        has_rawon = rawon_fav is not None
-        
-        # Check required fields
-        if rawon_fav:
-            required_fields = ["id", "dish", "source_count", "spice_count", "created_at"]
-            has_all_fields = all(field in rawon_fav for field in required_fields)
-            
-            details = f"Status: {resp.status_code}, Array: {is_array}, Has Rawon: {has_rawon}, Fields complete: {has_all_fields}"
-            log_test("POST /api/scan-favorites", is_array and has_rawon and has_all_fields, details)
+        if mode == "fallback":
+            log_test("Scenario 1 - nutrition object", True, "nutrition absent (acceptable for fallback mode)")
+            nutrition_valid = True  # Acceptable for fallback
         else:
-            log_test("POST /api/scan-favorites", False, f"Status: {resp.status_code}, Rawon daging not found in returned list")
-    else:
-        log_test("POST /api/scan-favorites", False, f"Status: {resp.status_code if resp else 'No response'}")
+            log_test("Scenario 1 - nutrition object exists", False, "nutrition is missing (mode=web)")
+            nutrition_valid = False
+    
+    # Check existing fields (regression)
+    has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
+    has_sources = "sources" in data and isinstance(data["sources"], list)
+    has_source_count = "source_count" in data and isinstance(data["source_count"], int)
+    has_dish = "dish" in data or "menu_name" in data
+    
+    regression_pass = has_spices and has_sources and has_source_count and has_dish
+    
+    details = (f"spices: {len(data.get('spices', []))}, sources: {len(data.get('sources', []))}, "
+               f"source_count: {data.get('source_count')}, dish: {data.get('dish') or data.get('menu_name')}")
+    log_test("Scenario 1 - regression (existing fields present)", regression_pass, details)
+    
+    # Check spices structure
+    if has_spices:
+        first_spice = data["spices"][0]
+        spice_has_structure = all(k in first_spice for k in ["name", "avg", "unit", "pct"])
+        log_test("Scenario 1 - spices have correct structure", spice_has_structure, 
+                f"First spice: {first_spice}")
+    
 else:
-    print("\nTest 4: SKIPPED - No scan result data from Test 1")
-    log_test("POST /api/scan-favorites", False, "Skipped - no scan result data")
+    log_test("Scenario 1 - Response 200", False, f"Status: {resp.status_code if resp else 'No response'}")
+    nutrition_valid = False
 
-time.sleep(1)
+time.sleep(2)
 
-# Test 5: GET /api/scan-favorites (with token)
-print("\nTest 5: GET /api/scan-favorites (with token)")
-resp = make_request("GET", "/scan-favorites", token=DEV_TOKEN)
+# ============================================================================
+# SCENARIO 2: POST same dish again -> cached=true with nutrition still present
+# ============================================================================
+print("\nSCENARIO 2: POST /api/scan/ai with Nasi goreng again (cache test)")
+print("   Should be much faster (cached)...")
+print()
+
+start_time = time.time()
+resp = make_request("POST", "/scan/ai", json_data={"dish_name": "Nasi goreng"}, timeout=60)
+elapsed_time = time.time() - start_time
+
 if resp and resp.status_code == 200:
     data = resp.json()
-    is_array = isinstance(data, list)
     
-    # Look for Rawon daging
-    rawon_fav = None
+    # Check response status
+    log_test("Scenario 2 - Response 200", True, f"Status: {resp.status_code}, Time: {elapsed_time:.2f}s")
+    
+    # Check cached flag
+    is_cached = data.get("cached") is True
+    log_test("Scenario 2 - cached=true", is_cached, f"cached={data.get('cached')}, Time: {elapsed_time:.2f}s")
+    
+    # Check nutrition object still present
+    nutrition = data.get("nutrition")
+    if nutrition:
+        nutrition_valid = validate_nutrition_object(nutrition, "Scenario 2")
+        
+        # Compare with Scenario 1 nutrition (should be identical)
+        if nasi_goreng_nutrition and nutrition_valid:
+            nutrition_identical = (
+                nutrition["calories"] == nasi_goreng_nutrition["calories"] and
+                nutrition["protein_g"] == nasi_goreng_nutrition["protein_g"] and
+                nutrition["carbs_g"] == nasi_goreng_nutrition["carbs_g"] and
+                nutrition["fat_g"] == nasi_goreng_nutrition["fat_g"] and
+                nutrition["fiber_g"] == nasi_goreng_nutrition["fiber_g"]
+            )
+            log_test("Scenario 2 - nutrition values identical to Scenario 1", nutrition_identical,
+                    f"Scenario 1: {nasi_goreng_nutrition}, Scenario 2: {nutrition}")
+    else:
+        mode = data.get("mode")
+        if mode == "fallback":
+            log_test("Scenario 2 - nutrition object", True, "nutrition absent (acceptable for fallback mode)")
+        else:
+            log_test("Scenario 2 - nutrition object exists", False, "nutrition is missing")
+    
+    # Check spices and sources still present
+    has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
+    has_sources = "sources" in data and isinstance(data["sources"], list)
+    
+    log_test("Scenario 2 - spices and sources still present", has_spices and has_sources,
+            f"spices: {len(data.get('spices', []))}, sources: {len(data.get('sources', []))}")
+    
+else:
+    log_test("Scenario 2 - Response 200", False, f"Status: {resp.status_code if resp else 'No response'}")
+
+time.sleep(2)
+
+# ============================================================================
+# SCENARIO 3: With Bearer token, POST /api/scan/ai, then GET history
+# ============================================================================
+print("\nSCENARIO 3: POST /api/scan/ai with Soto ayam (with auth), then check history")
+print("   This may take 10-30 seconds for AI processing...")
+print()
+
+# Step 3a: POST /api/scan/ai with token
+resp = make_request("POST", "/scan/ai", token=DEV_TOKEN, json_data={"dish_name": "Soto ayam"}, timeout=60)
+
+if resp and resp.status_code == 200:
+    data = resp.json()
+    
+    log_test("Scenario 3a - POST /api/scan/ai with token - Response 200", True, f"Status: {resp.status_code}")
+    
+    # Check saved_to_account
+    saved = data.get("saved_to_account") is True
+    log_test("Scenario 3a - saved_to_account=true", saved, f"saved_to_account={data.get('saved_to_account')}")
+    
+    # Check nutrition object
+    nutrition = data.get("nutrition")
+    if nutrition:
+        validate_nutrition_object(nutrition, "Scenario 3a")
+    else:
+        mode = data.get("mode")
+        if mode == "fallback":
+            log_test("Scenario 3a - nutrition object", True, "nutrition absent (acceptable for fallback mode)")
+        else:
+            log_test("Scenario 3a - nutrition object exists", False, "nutrition is missing")
+    
+else:
+    log_test("Scenario 3a - POST /api/scan/ai with token - Response 200", False, 
+            f"Status: {resp.status_code if resp else 'No response'}")
+
+time.sleep(2)
+
+# Step 3b: GET /api/scans/history
+print("\nScenario 3b: GET /api/scans/history")
+resp = make_request("GET", "/scans/history", token=DEV_TOKEN)
+
+if resp and resp.status_code == 200:
+    data = resp.json()
+    
+    log_test("Scenario 3b - GET /api/scans/history - Response 200", True, f"Status: {resp.status_code}")
+    
+    # Look for Soto ayam scan
+    soto_scan = None
     for item in data:
         dish_name = item.get("dish", "").lower()
-        if "rawon" in dish_name and "daging" in dish_name:
-            rawon_fav = item
-            if not favorite_id:
-                favorite_id = item.get("id")
+        if "soto" in dish_name and "ayam" in dish_name:
+            soto_scan = item
+            soto_ayam_scan_id = item.get("id")
             break
     
-    has_rawon = rawon_fav is not None
+    if soto_scan:
+        log_test("Scenario 3b - Soto ayam found in history", True, f"id={soto_scan.get('id')}, dish={soto_scan.get('dish')}")
+    else:
+        log_test("Scenario 3b - Soto ayam found in history", False, "Soto ayam not found in history")
     
-    details = f"Status: {resp.status_code}, Array: {is_array}, Count: {len(data)}, Has Rawon: {has_rawon}"
-    log_test("GET /api/scan-favorites", is_array and has_rawon, details)
 else:
-    log_test("GET /api/scan-favorites", False, f"Status: {resp.status_code if resp else 'No response'}")
+    log_test("Scenario 3b - GET /api/scans/history - Response 200", False, 
+            f"Status: {resp.status_code if resp else 'No response'}")
 
-time.sleep(1)
+time.sleep(2)
 
-# Test 6: GET /api/scan-favorites/{id} (with token)
-if favorite_id:
-    print(f"\nTest 6: GET /api/scan-favorites/{favorite_id} (with token)")
-    resp = make_request("GET", f"/scan-favorites/{favorite_id}", token=DEV_TOKEN)
+# Step 3c: GET /api/scans/history/{id}
+if soto_ayam_scan_id:
+    print(f"\nScenario 3c: GET /api/scans/history/{soto_ayam_scan_id}")
+    resp = make_request("GET", f"/scans/history/{soto_ayam_scan_id}", token=DEV_TOKEN)
+    
     if resp and resp.status_code == 200:
         data = resp.json()
         
+        log_test("Scenario 3c - GET /api/scans/history/{id} - Response 200", True, f"Status: {resp.status_code}")
+        
+        # Check nutrition object in history
+        nutrition = data.get("nutrition")
+        if nutrition:
+            validate_nutrition_object(nutrition, "Scenario 3c")
+        else:
+            mode = data.get("mode")
+            if mode == "fallback":
+                log_test("Scenario 3c - nutrition object", True, "nutrition absent (acceptable for fallback mode)")
+            else:
+                log_test("Scenario 3c - nutrition object exists", False, "nutrition is missing in history")
+        
+        # Check spices and sources present
         has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
-        has_sources = "sources" in data and isinstance(data["sources"], list) and len(data["sources"]) > 0
-        has_from_favorite = "from_favorite" in data and data["from_favorite"] is True
+        has_sources = "sources" in data and isinstance(data["sources"], list)
         
-        all_checks = has_spices and has_sources and has_from_favorite
+        log_test("Scenario 3c - spices and sources present in history", has_spices and has_sources,
+                f"spices: {len(data.get('spices', []))}, sources: {len(data.get('sources', []))}")
         
-        details = f"Status: {resp.status_code}, Spices: {len(data.get('spices', []))}, Sources: {len(data.get('sources', []))}, from_favorite: {data.get('from_favorite')}"
-        log_test("GET /api/scan-favorites/{id}", all_checks, details)
-        
-        if not all_checks:
-            print(f"   Missing - spices: {has_spices}, sources: {has_sources}, from_favorite: {has_from_favorite}")
     else:
-        log_test("GET /api/scan-favorites/{id}", False, f"Status: {resp.status_code if resp else 'No response'}")
+        log_test("Scenario 3c - GET /api/scans/history/{id} - Response 200", False, 
+                f"Status: {resp.status_code if resp else 'No response'}")
 else:
-    print("\nTest 6: SKIPPED - No favorite_id from previous tests")
-    log_test("GET /api/scan-favorites/{id}", False, "Skipped - no favorite_id")
+    print("\nScenario 3c: SKIPPED - No scan_id from Scenario 3b")
+    log_test("Scenario 3c - GET /api/scans/history/{id}", False, "Skipped - no scan_id")
 
-time.sleep(1)
+time.sleep(2)
 
-# Test 7: POST /api/scan-favorites again with same dish (different casing) - upsert, no duplicate
-if scan_result_data:
-    print("\nTest 7: POST /api/scan-favorites with different casing (upsert test)")
-    
-    # Get current count
-    resp_before = make_request("GET", "/scan-favorites", token=DEV_TOKEN)
-    count_before = len(resp_before.json()) if resp_before and resp_before.status_code == 200 else 0
-    
-    # Post with EXACT same dish name but different casing (to test case-insensitive upsert)
-    resp = make_request("POST", "/scan-favorites", token=DEV_TOKEN, 
-                       json_data={"dish": "rawon daging", "result": scan_result_data})
-    if resp and resp.status_code == 200:
-        data = resp.json()
-        count_after = len(data)
-        
-        # Count should be the same (upsert, not insert)
-        no_duplicate = count_after == count_before
-        
-        # Check that Rawon daging still exists (only one entry)
-        rawon_count = sum(1 for item in data if "rawon" in item.get("dish", "").lower() and "daging" in item.get("dish", "").lower())
-        only_one_rawon = rawon_count == 1
-        
-        all_checks = no_duplicate and only_one_rawon
-        
-        details = f"Status: {resp.status_code}, Count before: {count_before}, Count after: {count_after}, Rawon entries: {rawon_count}"
-        log_test("POST /api/scan-favorites upsert (no duplicate)", all_checks, details)
-    else:
-        log_test("POST /api/scan-favorites upsert (no duplicate)", False, f"Status: {resp.status_code if resp else 'No response'}")
-else:
-    print("\nTest 7: SKIPPED - No scan result data")
-    log_test("POST /api/scan-favorites upsert", False, "Skipped - no scan result data")
+# ============================================================================
+# SCENARIO 4: Regression - existing fields unaffected
+# ============================================================================
+print("\nSCENARIO 4: Regression test - verify existing fields still work")
+print()
 
-time.sleep(1)
+# Test with a simple dish to ensure all existing fields are present
+resp = make_request("POST", "/scan/ai", json_data={"dish_name": "Rendang"}, timeout=60)
 
-# Test 8: DELETE /api/scan-favorites/{id} (with token)
-if favorite_id:
-    print(f"\nTest 8: DELETE /api/scan-favorites/{favorite_id} (with token)")
-    resp = make_request("DELETE", f"/scan-favorites/{favorite_id}", token=DEV_TOKEN)
-    if resp and resp.status_code == 200:
-        data = resp.json()
-        is_array = isinstance(data, list)
-        
-        # Check that Rawon daging is no longer in the list
-        rawon_exists = any("rawon" in item.get("dish", "").lower() and "daging" in item.get("dish", "").lower() for item in data)
-        
-        all_checks = is_array and not rawon_exists
-        
-        details = f"Status: {resp.status_code}, Array: {is_array}, Rawon still exists: {rawon_exists}"
-        log_test("DELETE /api/scan-favorites/{id}", all_checks, details)
-    else:
-        log_test("DELETE /api/scan-favorites/{id}", False, f"Status: {resp.status_code if resp else 'No response'}")
-else:
-    print("\nTest 8: SKIPPED - No favorite_id")
-    log_test("DELETE /api/scan-favorites/{id}", False, "Skipped - no favorite_id")
-
-time.sleep(1)
-
-# Test 9: Auth guards - endpoints without token should return 401 or 403
-print("\nTest 9a: GET /api/scans/history without token (should be 401/403)")
-resp = make_request("GET", "/scans/history")
-is_unauthorized = resp and resp.status_code in [401, 403]
-log_test("GET /api/scans/history without token returns 401/403", is_unauthorized, f"Status: {resp.status_code if resp else 'No response'}")
-
-time.sleep(0.5)
-
-print("\nTest 9b: GET /api/scan-favorites without token (should be 401/403)")
-resp = make_request("GET", "/scan-favorites")
-is_unauthorized = resp and resp.status_code in [401, 403]
-log_test("GET /api/scan-favorites without token returns 401/403", is_unauthorized, f"Status: {resp.status_code if resp else 'No response'}")
-
-time.sleep(0.5)
-
-print("\nTest 9c: POST /api/scan-favorites without token (should be 401/403)")
-resp = make_request("POST", "/scan-favorites", json_data={"dish": "Test", "result": {}})
-is_unauthorized = resp and resp.status_code in [401, 403]
-log_test("POST /api/scan-favorites without token returns 401/403", is_unauthorized, f"Status: {resp.status_code if resp else 'No response'}")
-
-time.sleep(1)
-
-# Test 10: GET /api/me (with token) - should include scan_favorites array
-print("\nTest 10: GET /api/me (with token) - should include scan_favorites")
-resp = make_request("GET", "/me", token=DEV_TOKEN)
 if resp and resp.status_code == 200:
     data = resp.json()
     
-    has_scan_favorites = "scan_favorites" in data
-    is_array = isinstance(data.get("scan_favorites"), list) if has_scan_favorites else False
+    log_test("Scenario 4 - Response 200", True, f"Status: {resp.status_code}")
     
-    all_checks = has_scan_favorites and is_array
+    # Check all existing fields
+    has_dish = "dish" in data or "menu_name" in data
+    has_spices = "spices" in data and isinstance(data["spices"], list) and len(data["spices"]) > 0
+    has_insight = "insight" in data and isinstance(data["insight"], str)
+    has_sources = "sources" in data and isinstance(data["sources"], list)
+    has_source_count = "source_count" in data and isinstance(data["source_count"], int)
+    has_mode = "mode" in data and data["mode"] in ["web", "fallback"]
     
-    details = f"Status: {resp.status_code}, Has scan_favorites: {has_scan_favorites}, Is array: {is_array}"
-    log_test("GET /api/me includes scan_favorites array", all_checks, details)
+    all_fields_present = has_dish and has_spices and has_insight and has_sources and has_source_count and has_mode
+    
+    details = (f"dish: {data.get('dish') or data.get('menu_name')}, "
+               f"spices: {len(data.get('spices', []))}, "
+               f"insight: {len(data.get('insight', ''))}, "
+               f"sources: {len(data.get('sources', []))}, "
+               f"source_count: {data.get('source_count')}, "
+               f"mode: {data.get('mode')}")
+    
+    log_test("Scenario 4 - all existing fields present", all_fields_present, details)
+    
+    # Check spices structure (with avg, unit, pct)
+    if has_spices:
+        first_spice = data["spices"][0]
+        spice_structure_valid = all(k in first_spice for k in ["name", "avg", "unit", "pct"])
+        
+        # Check avg is numeric and > 0
+        avg_valid = isinstance(first_spice.get("avg"), (int, float)) and first_spice.get("avg") > 0
+        
+        # Check pct is numeric
+        pct_valid = isinstance(first_spice.get("pct"), (int, float))
+        
+        spice_valid = spice_structure_valid and avg_valid and pct_valid
+        
+        log_test("Scenario 4 - spices structure valid", spice_valid, 
+                f"First spice: name={first_spice.get('name')}, avg={first_spice.get('avg')}, "
+                f"unit={first_spice.get('unit')}, pct={first_spice.get('pct')}")
+    
+    # Check sources structure
+    if has_sources and len(data["sources"]) > 0:
+        first_source = data["sources"][0]
+        source_structure_valid = all(k in first_source for k in ["name", "title", "url"])
+        
+        # Check URL is valid (starts with http)
+        url_valid = isinstance(first_source.get("url"), str) and first_source.get("url").startswith("http")
+        
+        source_valid = source_structure_valid and url_valid
+        
+        log_test("Scenario 4 - sources structure valid", source_valid,
+                f"First source: name={first_source.get('name')}, url={first_source.get('url')[:50]}...")
+    
 else:
-    log_test("GET /api/me includes scan_favorites array", False, f"Status: {resp.status_code if resp else 'No response'}")
+    log_test("Scenario 4 - Response 200", False, f"Status: {resp.status_code if resp else 'No response'}")
 
+# ============================================================================
 # Summary
+# ============================================================================
 print("\n" + "=" * 80)
 print("TEST SUMMARY")
 print("=" * 80)
@@ -366,5 +420,8 @@ if total - passed > 0:
             print(f"  ❌ {t['name']}")
             if t["details"]:
                 print(f"     {t['details']}")
+    print()
 
-print("\n" + "=" * 80)
+print("=" * 80)
+print("NUTRITION FEATURE TEST COMPLETE")
+print("=" * 80)

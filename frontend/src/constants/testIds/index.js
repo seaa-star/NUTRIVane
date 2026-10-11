@@ -56,6 +56,8 @@ export const SCAN = {
   benchmarkToggle: "scan-benchmark-toggle",
   cachedBadge: "scan-cached-badge",
   favBtn: "scan-fav-btn",
+  resultNutrition: "scan-result-nutrition",
+  nutritionCalories: "scan-nutrition-calories",
 };
 
 export const AUTH = {

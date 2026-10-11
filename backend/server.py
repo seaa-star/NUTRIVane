@@ -216,6 +216,32 @@ async def tavily_recipe_search(dish: str, max_results: int = 5) -> list:
         return []
 
 
+def _parse_nutrition(raw) -> Optional[dict]:
+    """Normalisasi estimasi gizi dari LLM menjadi angka non-negatif; None bila tidak ada data."""
+    if not isinstance(raw, dict):
+        return None
+
+    def num(v):
+        try:
+            n = float(v)
+            return round(n, 1) if n >= 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    nutr = {
+        "serving": str(raw.get("serving") or "per porsi").strip()[:40],
+        "calories": num(raw.get("calories")),
+        "protein_g": num(raw.get("protein_g")),
+        "carbs_g": num(raw.get("carbs_g")),
+        "fat_g": num(raw.get("fat_g")),
+        "fiber_g": num(raw.get("fiber_g")),
+        "note": str(raw.get("note") or "").strip()[:240],
+    }
+    if nutr["calories"] <= 0 and nutr["protein_g"] <= 0 and nutr["carbs_g"] <= 0 and nutr["fat_g"] <= 0:
+        return None
+    return nutr
+
+
 async def ai_extract_average(dish: str, sources: list) -> Optional[dict]:
     """Gemini ekstrak + rata-ratakan bumbu dari banyak kutipan resep → JSON."""
     if not EMERGENT_LLM_KEY or not sources:
@@ -226,24 +252,29 @@ async def ai_extract_average(dish: str, sources: list) -> Optional[dict]:
             api_key=EMERGENT_LLM_KEY,
             session_id=f"extract-{uuid.uuid4()}",
             system_message=(
-                "Kamu ahli kuliner NutriVane. Kamu diberi beberapa kutipan resep dari berbagai sumber web untuk satu hidangan. "
-                "Tugasmu: ekstrak bumbu/rempah utama beserta takarannya dari tiap sumber, lalu hitung RATA-RATA takaran "
-                "untuk tiap bumbu di seluruh sumber yang memakai satuan sebanding. Jawab dalam Bahasa Indonesia. "
+                "Kamu ahli kuliner & gizi NutriVane. Kamu diberi beberapa kutipan resep dari berbagai sumber web untuk satu hidangan. "
+                "Tugasmu: (1) ekstrak bumbu/rempah utama beserta takarannya dari tiap sumber lalu hitung RATA-RATA takaran, "
+                "dan (2) perkirakan KANDUNGAN GIZI per satu porsi sajian. Jawab dalam Bahasa Indonesia. "
                 "Keluarkan HANYA JSON valid tanpa teks lain: "
                 '{"dish": str, "spices": [{"name": str, "avg": number (>0), '
                 '"unit": str (mis. "siung","gr","sdm","sdt","butir","ml","buah","lembar","cm"), '
                 '"sources": int (jumlah sumber yang mencantumkannya)}], '
-                '"insight": str (1-2 kalimat profil rasa yang hangat, tanpa menghakimi)}. '
-                "Aturan: maksimal 8 bumbu paling dominan, urut dari yang paling sering/banyak dipakai. "
+                '"insight": str (1-2 kalimat profil rasa yang hangat, tanpa menghakimi), '
+                '"nutrition": {"serving": str (mis. "per porsi"), "calories": number (kkal), '
+                '"protein_g": number, "carbs_g": number, "fat_g": number, "fiber_g": number, '
+                '"note": str (1 kalimat ramah soal gizi, tanpa menghakimi/medis)}}. '
+                "Aturan bumbu: maksimal 8 bumbu paling dominan, urut dari yang paling sering/banyak dipakai. "
                 "Fokus pada bumbu & rempah (bawang, cabai, kemiri, ketumbar, lengkuas, jahe, kunyit, serai, daun, dsb.); "
                 "jangan masukkan bahan utama non-bumbu seperti daging, nasi, air, tepung. "
-                "Jangan mengarang; jika takaran suatu bumbu tidak jelas di sebuah sumber, jangan hitung sumber itu untuk bumbu tsb. "
-                "Jika satuan berbeda antar sumber, pilih satuan yang paling umum dan konversikan sewajarnya."
+                "Jangan mengarang takaran; jika takaran suatu bumbu tidak jelas di sebuah sumber, jangan hitung sumber itu untuk bumbu tsb. "
+                "Jika satuan berbeda antar sumber, pilih satuan yang paling umum dan konversikan sewajarnya. "
+                "Aturan gizi: berikan ESTIMASI wajar per porsi sajian normal (bukan seluruh panci) berdasarkan bahan khas hidangan. "
+                "Semua angka gizi harus bilangan non-negatif; jika sangat tidak yakin untuk satu nilai, isi 0. Hindari klaim medis."
             ),
         ).with_model(INSIGHT_PROVIDER, INSIGHT_MODEL)
         blocks = [f"[Sumber {i}: {s['name']}]\n{s['content']}" for i, s in enumerate(sources, 1)]
         prompt = (f"Hidangan: {dish}\n\nKutipan {len(sources)} sumber resep:\n\n"
-                  + "\n\n".join(blocks) + "\n\nEkstrak & rata-ratakan bumbunya sesuai skema JSON.")
+                  + "\n\n".join(blocks) + "\n\nEkstrak & rata-ratakan bumbunya, lalu perkirakan kandungan gizi per porsi, sesuai skema JSON.")
         resp = await chat.send_message(UserMessage(text=prompt))
         data = _parse_json_block(resp)
         spices = []
@@ -260,7 +291,8 @@ async def ai_extract_average(dish: str, sources: list) -> Optional[dict]:
         if not spices:
             return None
         return {"dish": str(data.get("dish") or dish), "spices": spices,
-                "insight": str(data.get("insight") or "")}
+                "insight": str(data.get("insight") or ""),
+                "nutrition": _parse_nutrition(data.get("nutrition"))}
     except Exception as e:
         logger.warning(f"ai extract failed: {e}")
         return None
@@ -903,6 +935,7 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
             "identified": identified, "confidence": confidence, "vision_note": vision_note,
             "category_label": "Hasil pencarian web", "image": None,
             "spices": cached["spices"], "insight": cached["insight"],
+            "nutrition": cached.get("nutrition"),
             "sources": cached["sources"], "source_count": cached["source_count"],
             "saved_to_account": bool(user),
         }
@@ -921,7 +954,7 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
 
     payload = {
         "dish": extracted["dish"], "spices": with_pct(extracted["spices"]),
-        "insight": extracted["insight"],
+        "insight": extracted["insight"], "nutrition": extracted.get("nutrition"),
         "sources": [{"name": s["name"], "title": s["title"], "url": s["url"]} for s in sources],
         "source_count": len(sources),
     }
