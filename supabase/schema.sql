@@ -95,6 +95,13 @@ alter table public.scans add column if not exists dish_name text;
 
 create index if not exists scans_user_created_idx on public.scans(user_id, created_at desc);
 
+create table if not exists public.scan_cache (
+  dish_key text primary key,
+  dish text not null,
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.favorites (
   user_id uuid not null,
   slug text not null references public.recipes(slug) on delete cascade,

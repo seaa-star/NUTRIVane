@@ -28,6 +28,7 @@ VISION_PROVIDER = os.environ.get('VISION_MODEL_PROVIDER', 'gemini')
 VISION_MODEL = os.environ.get('VISION_MODEL_NAME', 'gemini-3.1-pro-preview')
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
 SCAN_MAX_SOURCES = int(os.environ.get('SCAN_MAX_SOURCES', '5'))
+SCAN_CACHE_TTL_DAYS = int(os.environ.get('SCAN_CACHE_TTL_DAYS', '30'))
 APP_TZ = ZoneInfo(os.environ.get('APP_TIMEZONE', 'Asia/Jakarta'))
 
 app = FastAPI(title="NutriVane API")
@@ -703,6 +704,42 @@ async def _log_scan(db, user, benchmark_slug, dish_name: str, had_image: bool):
     await db.commit()
 
 
+def _norm_dish(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+async def get_scan_cache(db, dish: str) -> Optional[dict]:
+    key = _norm_dish(dish)
+    if not key:
+        return None
+    try:
+        row = (await db.execute(text(
+            "select payload from scan_cache where dish_key=:k "
+            "and updated_at > now() - make_interval(days => :days)"
+        ), {"k": key, "days": SCAN_CACHE_TTL_DAYS})).first()
+        if not row:
+            return None
+        return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+    except Exception as e:
+        logger.warning(f"scan cache read failed: {e}")
+        return None
+
+
+async def set_scan_cache(db, dish: str, payload: dict):
+    key = _norm_dish(dish)
+    if not key:
+        return
+    try:
+        await db.execute(text(
+            "insert into scan_cache(dish_key,dish,payload,updated_at) "
+            "values(:k,:dish,cast(:p as jsonb),now()) "
+            "on conflict (dish_key) do update set dish=excluded.dish, payload=excluded.payload, updated_at=now()"
+        ), {"k": key, "dish": dish, "p": json.dumps(payload)})
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"scan cache write failed: {e}")
+
+
 async def scan_ai_fallback(db, user, had_image: bool, dish: str = "", confidence: str = "rendah",
                            vision_note: str = "", identified: bool = False, reason: str = "") -> dict:
     """Jatuh ke menu benchmark lokal terdekat agar hasil tidak pernah kosong."""
@@ -746,6 +783,22 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
         return await scan_ai_fallback(db, user, had_image, confidence="rendah", vision_note=vision_note,
                                       reason="Makanan belum bisa dikenali. Coba foto lebih jelas atau ketik nama makanannya.")
 
+    # Cache: makanan yang sama tidak perlu panggil Tavily+Gemini lagi (hemat kuota gratis + instan).
+    cached = await get_scan_cache(db, dish)
+    if cached:
+        await _log_scan(db, user, None, dish, had_image)
+        result = {
+            "mode": "web", "cached": True, "dish": cached["dish"], "menu_name": cached["dish"],
+            "identified": identified, "confidence": confidence, "vision_note": vision_note,
+            "category_label": "Hasil pencarian web", "image": None,
+            "spices": cached["spices"], "insight": cached["insight"],
+            "sources": cached["sources"], "source_count": cached["source_count"],
+            "saved_to_account": bool(user),
+        }
+        if user:
+            result["stats"] = await user_stats(db, user["id"])
+        return result
+
     sources = await tavily_recipe_search(dish, SCAN_MAX_SOURCES)
     extracted = await ai_extract_average(dish, sources) if sources else None
 
@@ -754,14 +807,19 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
                                       vision_note=vision_note, identified=identified,
                                       reason="Belum menemukan cukup data resep online untuk hidangan ini.")
 
+    payload = {
+        "dish": extracted["dish"], "spices": with_pct(extracted["spices"]),
+        "insight": extracted["insight"],
+        "sources": [{"name": s["name"], "title": s["title"], "url": s["url"]} for s in sources],
+        "source_count": len(sources),
+    }
+    await set_scan_cache(db, dish, payload)
     await _log_scan(db, user, None, dish, had_image)
     result = {
-        "mode": "web", "dish": extracted["dish"], "menu_name": extracted["dish"],
+        "mode": "web", "cached": False, "menu_name": payload["dish"],
         "identified": identified, "confidence": confidence, "vision_note": vision_note,
-        "category_label": "Hasil pencarian web", "image": None,
-        "spices": with_pct(extracted["spices"]), "insight": extracted["insight"],
-        "sources": [{"name": s["name"], "title": s["title"], "url": s["url"]} for s in sources],
-        "source_count": len(sources), "saved_to_account": bool(user),
+        "category_label": "Hasil pencarian web", "image": None, "saved_to_account": bool(user),
+        **payload,
     }
     if user:
         result["stats"] = await user_stats(db, user["id"])
