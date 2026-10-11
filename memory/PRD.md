@@ -53,9 +53,22 @@ Fonts: Plus Jakarta Sans (UI) + Fraunces (display). Rounded cards, pill tabs, de
 - AiResult: tombol "Bagikan ke WhatsApp" (wa.me/?text=...) berisi headline, ringkasan, daftar item, tip, link /mood.
 - Tested: testing agent iteration_3 — 8/8 backend, semua alur frontend lolos.
 
+## Implemented (2026-10-11) — AI Smart Scan (web recipe search)
+- `POST /api/scan/ai` {image_base64?, dish_name?}: (1) Gemini Vision identifies dish from photo;
+  (2) Tavily web search (TAVILY_API_KEY, SCAN_MAX_SOURCES=5) finds recipe pages + source URLs;
+  (3) Gemini Flash extracts & averages spices across sources → {spices[name,avg,unit,sources],insight};
+  (4) backend adds pct, logs scan, returns {mode:web|fallback, dish, spices, insight,
+  sources[name,title,url], source_count}. Fallback to nearest local benchmark when dish unidentified
+  or no spices (never 500).
+- Schema: `scans.benchmark_slug` nullable + FK dropped (idempotent ALTERs) + new `scans.dish_name`.
+- ScanPage: "Scan pintar (AI + web)" primary (photo/upload + optional dish-name input); old benchmark
+  flow in collapsible "Mode benchmark". Result shows dish + confidence/mode chips + insight + spice
+  meter + clickable Sumber list. New lib/api `postScanAi`.
+- DEPLOY NOTE: add `TAVILY_API_KEY` to Vercel backend Environment Variables (Prod+Preview).
+- Tested: backend testing agent 6/6 pass; frontend visually verified (Nasi goreng → 8 spices + 5 sources).
+
 ## Backlog / future
 - P1: Riwayat mood (list `mood_logs` di profil) — detail per entri.
-- P1: Live camera capture (currently upload/benchmark preview in beta).
 - P2: Expand dataset beyond 7 menus (drinks/dessert/tea exist in source doc).
 - P2: Cache invalidation / dataset version in AI insight cache key.
 - P2: Streaming AI response untuk mood (saat ini ~15-20s tunggu).

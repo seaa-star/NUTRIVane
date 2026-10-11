@@ -25,6 +25,7 @@ export const removeAiFavorite = (id) => api.delete(`/ai-favorites/${id}`).then((
 export const updateCountries = (body) => api.put("/me/countries", body).then((r) => r.data);
 export const getInsight = (slug) => api.get(`/insight/${slug}`).then((r) => r.data);
 export const postScan = (body) => api.post("/scan", body).then((r) => r.data);
+export const postScanAi = (body) => api.post("/scan/ai", body).then((r) => r.data);
 export const getMe = () => api.get("/me").then((r) => r.data);
 export const getFavorites = () => api.get("/favorites").then((r) => r.data);
 export const addFavorite = (slug) => api.put(`/favorites/${slug}`).then((r) => r.data);

@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta, date
 import json
 import re
 import uuid
+import httpx
+from urllib.parse import urlsplit
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -24,6 +26,8 @@ INSIGHT_PROVIDER = os.environ.get('INSIGHT_MODEL_PROVIDER', 'gemini')
 INSIGHT_MODEL = os.environ.get('INSIGHT_MODEL_NAME', 'gemini-3-flash-preview')
 VISION_PROVIDER = os.environ.get('VISION_MODEL_PROVIDER', 'gemini')
 VISION_MODEL = os.environ.get('VISION_MODEL_NAME', 'gemini-3.1-pro-preview')
+TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
+SCAN_MAX_SOURCES = int(os.environ.get('SCAN_MAX_SOURCES', '5'))
 APP_TZ = ZoneInfo(os.environ.get('APP_TIMEZONE', 'Asia/Jakarta'))
 
 app = FastAPI(title="NutriVane API")
@@ -43,6 +47,11 @@ class ScanRequest(BaseModel):
     benchmark_slug: str
     measure: bool = False
     image_base64: Optional[str] = None
+
+
+class AiScanRequest(BaseModel):
+    image_base64: Optional[str] = None
+    dish_name: str = Field(default="", max_length=120)
 
 
 class MoodRecommendRequest(BaseModel):
@@ -130,6 +139,125 @@ def _parse_json_block(raw: str) -> dict:
     cleaned = re.sub(r"^```(?:json)?|```$", "", (raw or "").strip(), flags=re.M).strip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
     return json.loads(cleaned[start:end + 1])
+
+
+def _domain_name(url: str) -> str:
+    try:
+        host = (urlsplit(url).hostname or url).lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return url
+
+
+async def identify_food_name(image_base64: str) -> dict:
+    """Vision AI → nama hidangan terstruktur {name, confidence, note}."""
+    if not EMERGENT_LLM_KEY:
+        return {"name": "", "confidence": "rendah", "note": "AI vision belum aktif."}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"identify-{uuid.uuid4()}",
+            system_message=(
+                "Kamu ahli kuliner. Lihat foto makanan/minuman dan tentukan nama hidangannya. "
+                "Keluarkan HANYA JSON valid tanpa teks lain: "
+                '{"name": str (nama hidangan paling mungkin dalam Bahasa Indonesia), '
+                '"confidence": "tinggi"|"sedang"|"rendah", "note": str (1 kalimat singkat alasan)}. '
+                "Jika gambar bukan makanan/minuman, isi name dengan string kosong dan confidence 'rendah'."
+            ),
+        ).with_model(VISION_PROVIDER, VISION_MODEL)
+        clean = image_base64.split(",", 1)[-1] if image_base64.startswith("data:") else image_base64
+        msg = UserMessage(text="Makanan atau minuman apa ini? Jawab dalam JSON.",
+                          file_contents=[ImageContent(image_base64=clean)])
+        resp = await chat.send_message(msg)
+        data = _parse_json_block(resp)
+        conf = data.get("confidence")
+        return {"name": str(data.get("name") or "").strip(),
+                "confidence": conf if conf in ("tinggi", "sedang", "rendah") else "sedang",
+                "note": str(data.get("note") or "")}
+    except Exception as e:
+        logger.warning(f"identify food failed: {e}")
+        return {"name": "", "confidence": "rendah", "note": ""}
+
+
+async def tavily_recipe_search(dish: str, max_results: int = 5) -> list:
+    """Cari resep di web via Tavily → list {name, title, url, content}."""
+    if not TAVILY_API_KEY:
+        return []
+    try:
+        body = {"query": f"resep {dish} bahan dan bumbu lengkap takaran",
+                "search_depth": "basic", "max_results": max_results,
+                "include_answer": False, "include_raw_content": True}
+        headers = {"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=25) as c:
+            r = await c.post("https://api.tavily.com/search", json=body, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+        out, seen = [], set()
+        for x in data.get("results", []):
+            url = x.get("url")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            content = (x.get("raw_content") or x.get("content") or "")[:2200]
+            if not content:
+                continue
+            out.append({"name": _domain_name(url), "title": (x.get("title") or dish)[:140],
+                        "url": url, "content": content})
+        return out
+    except Exception as e:
+        logger.warning(f"tavily search failed: {e}")
+        return []
+
+
+async def ai_extract_average(dish: str, sources: list) -> Optional[dict]:
+    """Gemini ekstrak + rata-ratakan bumbu dari banyak kutipan resep → JSON."""
+    if not EMERGENT_LLM_KEY or not sources:
+        return None
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"extract-{uuid.uuid4()}",
+            system_message=(
+                "Kamu ahli kuliner NutriVane. Kamu diberi beberapa kutipan resep dari berbagai sumber web untuk satu hidangan. "
+                "Tugasmu: ekstrak bumbu/rempah utama beserta takarannya dari tiap sumber, lalu hitung RATA-RATA takaran "
+                "untuk tiap bumbu di seluruh sumber yang memakai satuan sebanding. Jawab dalam Bahasa Indonesia. "
+                "Keluarkan HANYA JSON valid tanpa teks lain: "
+                '{"dish": str, "spices": [{"name": str, "avg": number (>0), '
+                '"unit": str (mis. "siung","gr","sdm","sdt","butir","ml","buah","lembar","cm"), '
+                '"sources": int (jumlah sumber yang mencantumkannya)}], '
+                '"insight": str (1-2 kalimat profil rasa yang hangat, tanpa menghakimi)}. '
+                "Aturan: maksimal 8 bumbu paling dominan, urut dari yang paling sering/banyak dipakai. "
+                "Fokus pada bumbu & rempah (bawang, cabai, kemiri, ketumbar, lengkuas, jahe, kunyit, serai, daun, dsb.); "
+                "jangan masukkan bahan utama non-bumbu seperti daging, nasi, air, tepung. "
+                "Jangan mengarang; jika takaran suatu bumbu tidak jelas di sebuah sumber, jangan hitung sumber itu untuk bumbu tsb. "
+                "Jika satuan berbeda antar sumber, pilih satuan yang paling umum dan konversikan sewajarnya."
+            ),
+        ).with_model(INSIGHT_PROVIDER, INSIGHT_MODEL)
+        blocks = [f"[Sumber {i}: {s['name']}]\n{s['content']}" for i, s in enumerate(sources, 1)]
+        prompt = (f"Hidangan: {dish}\n\nKutipan {len(sources)} sumber resep:\n\n"
+                  + "\n\n".join(blocks) + "\n\nEkstrak & rata-ratakan bumbunya sesuai skema JSON.")
+        resp = await chat.send_message(UserMessage(text=prompt))
+        data = _parse_json_block(resp)
+        spices = []
+        for sp in (data.get("spices") or [])[:8]:
+            try:
+                avg = float(sp.get("avg"))
+            except (TypeError, ValueError):
+                continue
+            if avg <= 0 or not sp.get("name"):
+                continue
+            spices.append({"name": str(sp["name"]).strip(), "avg": round(avg, 1),
+                           "unit": str(sp.get("unit") or "").strip(),
+                           "sources": int(sp.get("sources") or 1)})
+        if not spices:
+            return None
+        return {"dish": str(data.get("dish") or dish), "spices": spices,
+                "insight": str(data.get("insight") or "")}
+    except Exception as e:
+        logger.warning(f"ai extract failed: {e}")
+        return None
 
 
 def mood_fallback(mood: dict, recipes: list, current_country: str, origin_country: str) -> dict:
@@ -564,6 +692,80 @@ async def scan(req: ScanRequest, user=Depends(optional_user), db=Depends(get_db)
 @api_router.get("/stats")
 async def stats(user=Depends(optional_user), db=Depends(get_db)):
     return {"authenticated": bool(user), **(await user_stats(db, user["id"] if user else None))}
+
+
+async def _log_scan(db, user, benchmark_slug, dish_name: str, had_image: bool):
+    await db.execute(text(
+        "insert into scans(user_id,benchmark_slug,dish_name,measure,had_image) "
+        "values(cast(:uid as uuid),:slug,:dish,:measure,:had_image)"
+    ), {"uid": user["id"] if user else None, "slug": benchmark_slug, "dish": dish_name,
+        "measure": True, "had_image": had_image})
+    await db.commit()
+
+
+async def scan_ai_fallback(db, user, had_image: bool, dish: str = "", confidence: str = "rendah",
+                           vision_note: str = "", identified: bool = False, reason: str = "") -> dict:
+    """Jatuh ke menu benchmark lokal terdekat agar hasil tidak pernah kosong."""
+    row = None
+    if dish:
+        row = (await db.execute(text(f"select {RECIPE_COLS} from recipes where name ilike :q limit 1"),
+                                {"q": f"%{dish}%"})).first()
+    if not row:
+        row = (await db.execute(text(f"select {RECIPE_COLS} from recipes order by sort_order limit 1"))).first()
+    r = row_dict(row)
+    await _log_scan(db, user, r["slug"], dish or r["name"], had_image)
+    insight, _ = await get_or_create_insight(db, r)
+    result = {
+        "mode": "fallback", "dish": dish or r["name"], "menu_name": r["name"],
+        "identified": identified, "confidence": confidence,
+        "vision_note": vision_note, "fallback_reason": reason or "Menampilkan data benchmark terdekat.",
+        "category_label": r["category_label"], "image": r["image"], "benchmark_slug": r["slug"],
+        "spices": with_pct(r["spices"]), "insight": insight,
+        "sources": [{"name": s.get("name", "Sumber resep"), "title": s.get("name", ""), "url": s.get("url")}
+                    for s in r["sources"] if isinstance(s, dict)],
+        "source_count": len(r["sources"]), "saved_to_account": bool(user),
+    }
+    if user:
+        result["stats"] = await user_stats(db, user["id"])
+    return result
+
+
+@api_router.post("/scan/ai")
+async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(get_db)):
+    """Foto → kenali makanan → cari resep di web → rata-ratakan bumbu → sebutkan sumber."""
+    had_image = bool(req.image_base64)
+    dish = req.dish_name.strip()
+    identified, confidence, vision_note = bool(dish), ("tinggi" if dish else "sedang"), ""
+
+    if req.image_base64 and not dish:
+        info = await identify_food_name(req.image_base64)
+        dish, confidence, vision_note = info["name"], info["confidence"], info["note"]
+        identified = bool(dish)
+
+    if not dish:
+        return await scan_ai_fallback(db, user, had_image, confidence="rendah", vision_note=vision_note,
+                                      reason="Makanan belum bisa dikenali. Coba foto lebih jelas atau ketik nama makanannya.")
+
+    sources = await tavily_recipe_search(dish, SCAN_MAX_SOURCES)
+    extracted = await ai_extract_average(dish, sources) if sources else None
+
+    if not extracted:
+        return await scan_ai_fallback(db, user, had_image, dish=dish, confidence=confidence,
+                                      vision_note=vision_note, identified=identified,
+                                      reason="Belum menemukan cukup data resep online untuk hidangan ini.")
+
+    await _log_scan(db, user, None, dish, had_image)
+    result = {
+        "mode": "web", "dish": extracted["dish"], "menu_name": extracted["dish"],
+        "identified": identified, "confidence": confidence, "vision_note": vision_note,
+        "category_label": "Hasil pencarian web", "image": None,
+        "spices": with_pct(extracted["spices"]), "insight": extracted["insight"],
+        "sources": [{"name": s["name"], "title": s["title"], "url": s["url"]} for s in sources],
+        "source_count": len(sources), "saved_to_account": bool(user),
+    }
+    if user:
+        result["stats"] = await user_stats(db, user["id"])
+    return result
 
 
 # ----------------------------- Account endpoints (auth required) -----------------------------

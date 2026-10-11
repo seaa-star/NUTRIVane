@@ -47,6 +47,13 @@ export const SCAN = {
   resultCard: "scan-result-card",
   resultSpice: "scan-result-spice",
   resetBtn: "scan-reset-btn",
+  aiStartBtn: "scan-ai-start-btn",
+  dishInput: "scan-dish-input",
+  sources: "scan-sources",
+  source: (i) => `scan-source-${i}`,
+  dishName: "scan-dish-name",
+  confidence: "scan-confidence",
+  benchmarkToggle: "scan-benchmark-toggle",
 };
 
 export const AUTH = {
