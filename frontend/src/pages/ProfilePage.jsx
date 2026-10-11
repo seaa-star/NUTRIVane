@@ -5,6 +5,8 @@ import Layout from "@/components/Layout";
 import { RecipeCard, SectionHead } from "@/components/common";
 import { MoodHistory } from "@/components/profile/MoodHistory";
 import { AiFavorites } from "@/components/profile/AiFavorites";
+import { ScanHistory } from "@/components/profile/ScanHistory";
+import { ScanFavorites } from "@/components/profile/ScanFavorites";
 import { useAuth } from "@/context/AuthContext";
 import { getFavorites } from "@/lib/api";
 import { PROFILE } from "@/constants/testIds";
@@ -74,6 +76,8 @@ export default function ProfilePage() {
           )}
         </section>
 
+        <ScanFavorites />
+        <ScanHistory />
         <AiFavorites />
         <MoodHistory />
 

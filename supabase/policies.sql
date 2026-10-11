@@ -44,3 +44,10 @@ alter table public.ai_favorites enable row level security;
 create policy "own ai favorites read"   on public.ai_favorites for select to authenticated using ((select auth.uid()) = user_id);
 create policy "own ai favorites insert" on public.ai_favorites for insert to authenticated with check ((select auth.uid()) = user_id);
 create policy "own ai favorites delete" on public.ai_favorites for delete to authenticated using ((select auth.uid()) = user_id);
+
+-- Scan favorites (hasil scan web yang disimpan pengguna). Backend memakai service role
+-- sehingga tetap berfungsi tanpa ini; policy ditambahkan agar konsisten bila diakses via client.
+alter table public.scan_favorites enable row level security;
+create policy "own scan favorites read"   on public.scan_favorites for select to authenticated using ((select auth.uid()) = user_id);
+create policy "own scan favorites insert" on public.scan_favorites for insert to authenticated with check ((select auth.uid()) = user_id);
+create policy "own scan favorites delete" on public.scan_favorites for delete to authenticated using ((select auth.uid()) = user_id);

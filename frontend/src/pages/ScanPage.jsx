@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Scan as ScanIcon, Sparkles, Info, Camera, Upload, RotateCcw, Flame, CloudOff, Search, Globe, ExternalLink, ChevronDown } from "lucide-react";
+import { ArrowLeft, Scan as ScanIcon, Sparkles, Info, Camera, Upload, RotateCcw, Flame, CloudOff, Search, Globe, ExternalLink, ChevronDown, Zap, Heart } from "lucide-react";
 import Layout from "@/components/Layout";
 import { SpiceMeter } from "@/components/common";
 import { CameraCapture } from "@/components/CameraCapture";
-import { getRecipes, postScan, postScanAi } from "@/lib/api";
+import { getRecipes, postScan, postScanAi, getScanHistoryDetail, getScanFavoriteDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { SCAN } from "@/constants/testIds";
 
@@ -12,7 +12,7 @@ export default function ScanPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const fileRef = useRef(null);
-  const { user, setStats } = useAuth();
+  const { user, setStats, isScanFavorite, toggleScanFavorite } = useAuth();
 
   const [benchmarks, setBenchmarks] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -30,6 +30,21 @@ export default function ScanPage() {
       setBenchmarks(rs);
       setSelected(params.get("benchmark") || rs[0]?.slug || null);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Open a saved scan from history / favorites via query param.
+  useEffect(() => {
+    const historyId = params.get("history");
+    const favoriteId = params.get("favorite");
+    if (!historyId && !favoriteId) return;
+    setLoading(true);
+    setLoadingMsg("Memuat hasil tersimpan…");
+    const fetcher = historyId ? getScanHistoryDetail(historyId) : getScanFavoriteDetail(favoriteId);
+    fetcher
+      .then((res) => setResult(res))
+      .catch(() => setResult({ error: true }))
+      .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -247,10 +262,29 @@ export default function ScanPage() {
                       keyakinan {result.confidence}
                     </span>
                   )}
+                  {result.cached && (
+                    <span data-testid={SCAN.cachedBadge} className="nv-chip" style={{
+                      fontSize: "0.62rem", textTransform: "uppercase", letterSpacing: "0.08em",
+                      background: "#fdf3e3", color: "#b4791f",
+                    }}>
+                      <Zap size={11} className="inline mr-1" fill="#b4791f" />instan
+                    </span>
+                  )}
                 </div>
-                <h2 data-testid={SCAN.dishName} className="font-display text-2xl font-semibold mt-2" style={{ color: "var(--nv-green-deep)" }}>
-                  {result.dish || result.menu_name}
-                </h2>
+                <div className="flex items-start justify-between gap-3 mt-2">
+                  <h2 data-testid={SCAN.dishName} className="font-display text-2xl font-semibold" style={{ color: "var(--nv-green-deep)" }}>
+                    {result.dish || result.menu_name}
+                  </h2>
+                  {(result.dish || result.menu_name) && result.mode !== "benchmark" && (
+                    <button onClick={() => toggleScanFavorite(result.dish || result.menu_name, result)}
+                      data-testid={SCAN.favBtn} aria-label="Simpan hasil scan ke favorit"
+                      className="grid place-items-center w-10 h-10 rounded-full shrink-0 transition-transform active:scale-90"
+                      style={{ background: isScanFavorite(result.dish || result.menu_name) ? "var(--nv-accent)" : "var(--nv-green-soft)" }}>
+                      <Heart size={18} color={isScanFavorite(result.dish || result.menu_name) ? "#fff" : "var(--nv-green)"}
+                        fill={isScanFavorite(result.dish || result.menu_name) ? "#fff" : "none"} />
+                    </button>
+                  )}
+                </div>
                 <div className="mt-3 rounded-2xl p-3.5 flex items-start gap-2.5" style={{ background: "var(--nv-green-soft)" }}>
                   <Sparkles size={16} color="var(--nv-green)" className="mt-0.5 shrink-0" />
                   <p className="text-sm leading-relaxed" style={{ color: "var(--nv-ink)" }}>{result.insight}</p>

@@ -75,6 +75,11 @@ class AiFavoriteRequest(BaseModel):
     mood_key: Optional[str] = Field(default=None, max_length=40)
 
 
+class ScanFavoriteRequest(BaseModel):
+    dish: str = Field(min_length=1, max_length=120)
+    result: dict
+
+
 # ----------------------------- AI helpers -----------------------------
 async def generate_insight_text(recipe: dict) -> str:
     """Simple, cost-efficient AI (standard model) for a short flavor insight."""
@@ -431,6 +436,55 @@ async def ai_favorites(db, user_id: str) -> list:
     return [{**row_dict(r), "created_at": r.created_at.isoformat()} for r in rows]
 
 
+def _as_dict(v) -> dict:
+    if isinstance(v, dict):
+        return v
+    try:
+        return json.loads(v) if v else {}
+    except Exception:
+        return {}
+
+
+async def scan_history_list(db, user_id: str, limit: int = 20) -> list:
+    rows = (await db.execute(text(
+        "select id, dish_name, benchmark_slug, had_image, result, created_at from scans "
+        "where user_id=cast(:uid as uuid) and result is not null "
+        "order by created_at desc limit :lim"
+    ), {"uid": user_id, "lim": limit})).all()
+    out = []
+    for r in rows:
+        res = _as_dict(r.result)
+        out.append({
+            "id": r.id,
+            "dish": res.get("dish") or res.get("menu_name") or r.dish_name,
+            "mode": res.get("mode"),
+            "cached": bool(res.get("cached")),
+            "source_count": res.get("source_count", 0),
+            "spice_count": len(res.get("spices") or []),
+            "confidence": res.get("confidence"),
+            "had_image": r.had_image,
+            "benchmark_slug": res.get("benchmark_slug"),
+            "created_at": r.created_at.isoformat(),
+        })
+    return out
+
+
+async def scan_favorites_list(db, user_id: str) -> list:
+    rows = (await db.execute(text(
+        "select id, dish, result, created_at from scan_favorites "
+        "where user_id=cast(:uid as uuid) order by created_at desc"), {"uid": user_id})).all()
+    out = []
+    for r in rows:
+        res = _as_dict(r.result)
+        out.append({
+            "id": r.id, "dish": r.dish,
+            "source_count": res.get("source_count", 0),
+            "spice_count": len(res.get("spices") or []),
+            "created_at": r.created_at.isoformat(),
+        })
+    return out
+
+
 async def moods_map(db) -> dict:
     return {r.key: {"key": r.key, "label": r.label, "emoji": r.emoji}
             for r in (await db.execute(text("select key,label,emoji from moods"))).all()}
@@ -611,6 +665,62 @@ async def remove_ai_favorite(fav_id: int, user=Depends(require_user), db=Depends
     return await ai_favorites(db, user["id"])
 
 
+# ----------------------------- Scan history & scan favorites (auth required) -----------------------------
+@api_router.get("/scans/history")
+async def get_scan_history(limit: int = 20, user=Depends(require_user), db=Depends(get_db)):
+    return await scan_history_list(db, user["id"], min(max(limit, 1), 50))
+
+
+@api_router.get("/scans/history/{scan_id}")
+async def get_scan_history_detail(scan_id: int, user=Depends(require_user), db=Depends(get_db)):
+    row = (await db.execute(text(
+        "select id, had_image, result, created_at from scans "
+        "where id=:id and user_id=cast(:uid as uuid)"), {"id": scan_id, "uid": user["id"]})).first()
+    if not row or not row.result:
+        raise HTTPException(status_code=404, detail="Riwayat scan tidak ditemukan")
+    res = _as_dict(row.result)
+    return {**res, "id": row.id, "from_history": True, "created_at": row.created_at.isoformat()}
+
+
+@api_router.get("/scan-favorites")
+async def list_scan_favorites(user=Depends(require_user), db=Depends(get_db)):
+    return await scan_favorites_list(db, user["id"])
+
+
+@api_router.post("/scan-favorites")
+async def add_scan_favorite(req: ScanFavoriteRequest, user=Depends(require_user), db=Depends(get_db)):
+    dish = req.dish.strip()
+    if not dish:
+        raise HTTPException(status_code=422, detail="Nama makanan tidak boleh kosong")
+    snapshot = {k: v for k, v in (req.result or {}).items() if k != "stats"}
+    await db.execute(text(
+        "insert into scan_favorites(user_id,dish,result) "
+        "values(cast(:uid as uuid),:dish,cast(:result as jsonb)) "
+        "on conflict (user_id, lower(dish)) do update set result=excluded.result, created_at=now()"
+    ), {"uid": user["id"], "dish": dish, "result": json.dumps(snapshot)})
+    await db.commit()
+    return await scan_favorites_list(db, user["id"])
+
+
+@api_router.get("/scan-favorites/{fav_id}")
+async def get_scan_favorite_detail(fav_id: int, user=Depends(require_user), db=Depends(get_db)):
+    row = (await db.execute(text(
+        "select id, dish, result, created_at from scan_favorites "
+        "where id=:id and user_id=cast(:uid as uuid)"), {"id": fav_id, "uid": user["id"]})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Favorit scan tidak ditemukan")
+    res = _as_dict(row.result)
+    return {**res, "id": row.id, "from_favorite": True, "created_at": row.created_at.isoformat()}
+
+
+@api_router.delete("/scan-favorites/{fav_id}")
+async def remove_scan_favorite(fav_id: int, user=Depends(require_user), db=Depends(get_db)):
+    await db.execute(text("delete from scan_favorites where id=:id and user_id=cast(:uid as uuid)"),
+                     {"id": fav_id, "uid": user["id"]})
+    await db.commit()
+    return await scan_favorites_list(db, user["id"])
+
+
 DAY_LABELS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
 
@@ -681,9 +791,10 @@ async def scan(req: ScanRequest, user=Depends(optional_user), db=Depends(get_db)
     result["insight"], _ = await get_or_create_insight(db, r)
 
     await db.execute(text(
-        "insert into scans(user_id,benchmark_slug,measure,had_image) "
-        "values(cast(:uid as uuid),:slug,:measure,:had_image)"
-    ), {"uid": user["id"] if user else None, "slug": r["slug"], "measure": req.measure, "had_image": bool(req.image_base64)})
+        "insert into scans(user_id,benchmark_slug,measure,had_image,result) "
+        "values(cast(:uid as uuid),:slug,:measure,:had_image,cast(:result as jsonb))"
+    ), {"uid": user["id"] if user else None, "slug": r["slug"], "measure": req.measure,
+        "had_image": bool(req.image_base64), "result": json.dumps({**result, "mode": "benchmark"})})
     await db.commit()
     if user:
         result["stats"] = await user_stats(db, user["id"])
@@ -695,12 +806,13 @@ async def stats(user=Depends(optional_user), db=Depends(get_db)):
     return {"authenticated": bool(user), **(await user_stats(db, user["id"] if user else None))}
 
 
-async def _log_scan(db, user, benchmark_slug, dish_name: str, had_image: bool):
+async def _log_scan(db, user, benchmark_slug, dish_name: str, had_image: bool, result: dict = None):
     await db.execute(text(
-        "insert into scans(user_id,benchmark_slug,dish_name,measure,had_image) "
-        "values(cast(:uid as uuid),:slug,:dish,:measure,:had_image)"
+        "insert into scans(user_id,benchmark_slug,dish_name,measure,had_image,result) "
+        "values(cast(:uid as uuid),:slug,:dish,:measure,:had_image,cast(:result as jsonb))"
     ), {"uid": user["id"] if user else None, "slug": benchmark_slug, "dish": dish_name,
-        "measure": True, "had_image": had_image})
+        "measure": True, "had_image": had_image,
+        "result": json.dumps(result) if result else None})
     await db.commit()
 
 
@@ -750,7 +862,6 @@ async def scan_ai_fallback(db, user, had_image: bool, dish: str = "", confidence
     if not row:
         row = (await db.execute(text(f"select {RECIPE_COLS} from recipes order by sort_order limit 1"))).first()
     r = row_dict(row)
-    await _log_scan(db, user, r["slug"], dish or r["name"], had_image)
     insight, _ = await get_or_create_insight(db, r)
     result = {
         "mode": "fallback", "dish": dish or r["name"], "menu_name": r["name"],
@@ -762,6 +873,7 @@ async def scan_ai_fallback(db, user, had_image: bool, dish: str = "", confidence
                     for s in r["sources"] if isinstance(s, dict)],
         "source_count": len(r["sources"]), "saved_to_account": bool(user),
     }
+    await _log_scan(db, user, r["slug"], dish or r["name"], had_image, result=result)
     if user:
         result["stats"] = await user_stats(db, user["id"])
     return result
@@ -786,7 +898,6 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
     # Cache: makanan yang sama tidak perlu panggil Tavily+Gemini lagi (hemat kuota gratis + instan).
     cached = await get_scan_cache(db, dish)
     if cached:
-        await _log_scan(db, user, None, dish, had_image)
         result = {
             "mode": "web", "cached": True, "dish": cached["dish"], "menu_name": cached["dish"],
             "identified": identified, "confidence": confidence, "vision_note": vision_note,
@@ -795,6 +906,7 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
             "sources": cached["sources"], "source_count": cached["source_count"],
             "saved_to_account": bool(user),
         }
+        await _log_scan(db, user, None, dish, had_image, result=result)
         if user:
             result["stats"] = await user_stats(db, user["id"])
         return result
@@ -814,13 +926,13 @@ async def scan_ai(req: AiScanRequest, user=Depends(optional_user), db=Depends(ge
         "source_count": len(sources),
     }
     await set_scan_cache(db, dish, payload)
-    await _log_scan(db, user, None, dish, had_image)
     result = {
         "mode": "web", "cached": False, "menu_name": payload["dish"],
         "identified": identified, "confidence": confidence, "vision_note": vision_note,
         "category_label": "Hasil pencarian web", "image": None, "saved_to_account": bool(user),
         **payload,
     }
+    await _log_scan(db, user, None, dish, had_image, result=result)
     if user:
         result["stats"] = await user_stats(db, user["id"])
     return result
@@ -838,7 +950,8 @@ async def me(user=Depends(require_user), db=Depends(get_db)):
     await upsert_profile(db, user)
     return {"user": {**user, **(await profile_countries(db, user["id"]))},
             "stats": await user_stats(db, user["id"]), "favorites": await favorite_slugs(db, user["id"]),
-            "ai_favorites": await ai_favorites(db, user["id"])}
+            "ai_favorites": await ai_favorites(db, user["id"]),
+            "scan_favorites": await scan_favorites_list(db, user["id"])}
 
 
 @api_router.put("/me/countries")

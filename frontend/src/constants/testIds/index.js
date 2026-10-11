@@ -54,6 +54,8 @@ export const SCAN = {
   dishName: "scan-dish-name",
   confidence: "scan-confidence",
   benchmarkToggle: "scan-benchmark-toggle",
+  cachedBadge: "scan-cached-badge",
+  favBtn: "scan-fav-btn",
 };
 
 export const AUTH = {
@@ -86,6 +88,13 @@ export const PROFILE = {
   aiFavItem: (id) => `profile-ai-fav-${id}`,
   aiFavRemove: (id) => `profile-ai-fav-remove-${id}`,
   aiFavEmpty: "profile-ai-favorites-empty",
+  scanHistoryList: "profile-scan-history",
+  scanHistoryItem: (id) => `profile-scan-history-${id}`,
+  scanHistoryEmpty: "profile-scan-history-empty",
+  scanFavList: "profile-scan-favorites",
+  scanFavItem: (id) => `profile-scan-fav-${id}`,
+  scanFavRemove: (id) => `profile-scan-fav-remove-${id}`,
+  scanFavEmpty: "profile-scan-favorites-empty",
 };
 
 export const RECIPES = {
